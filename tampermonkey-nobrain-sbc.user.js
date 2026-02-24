@@ -92,14 +92,14 @@ GM_addStyle(`
 (function () {
     "use strict";
 
-    // ─── Constants ───────────────────────────────────────────────────────────────
+    // ─── 常量 / Constants ─────────────────────────────────────────────────────────
     const DEFAULT_SEARCH_BATCH_SIZE = 91;
     const HILL_CLIMB_MAX_ITER = 5000;
 
-    // ─── AI-SBC Detection ────────────────────────────────────────────────────────
+    // ─── ai-sbc脚本检测 / AI-SBC Detection ──────────────────────────────────────
     const isAiSBCRunning = () => typeof window.fetchLivePlayerPrice === 'function';
 
-    // ─── Utilities ───────────────────────────────────────────────────────────────
+    // ─── 工具函数 / Utilities ─────────────────────────────────────────────────────
     const showNotification = (message, type) => {
         const t = type !== undefined ? type : UINotificationType.POSITIVE;
         services.Notification.queue([message, t]);
@@ -165,7 +165,7 @@ GM_addStyle(`
         return button;
     };
 
-    // ─── Price Cache (shared IndexedDB with main script) ─────────────────────────
+    // ─── 价格缓存（与ai-sbc脚本共享 IndexedDB）/ Price Cache (shared IndexedDB with ai-sbc script) ─
     let cachedPriceItems = null;
 
     const loadPriceItems = () => {
@@ -192,7 +192,7 @@ GM_addStyle(`
         return cachedPriceItems[item.definitionId]?.price || null;
     };
 
-    // ─── Price Fetching ───────────────────────────────────────────────────────────
+    // ─── 价格抓取 / Price Fetching ────────────────────────────────────────────────
 
     const savePriceItems = () => {
         return new Promise((resolve) => {
@@ -256,7 +256,7 @@ GM_addStyle(`
 
     const isPriceOld = (item) => {
         if (!cachedPriceItems || !(item?.definitionId in cachedPriceItems)) return true;
-        const FRESH_MS = 60 * 60 * 1000; // 1 hour
+        const FRESH_MS = 60 * 60 * 1000; // 1小时有效期 / 1 hour
         const timeStamp = new Date(cachedPriceItems[item.definitionId]?.timeStamp);
         if (!timeStamp.getTime()) return true;
         return (timeStamp.getTime() + FRESH_MS) < Date.now();
@@ -320,7 +320,7 @@ GM_addStyle(`
         }
     };
 
-    // ─── Shared Settings ──────────────────────────────────────────────────────────
+    // ─── 共享设置 / Shared Settings ───────────────────────────────────────────────
     const getSharedSettings = (id) => {
         try {
             const s = JSON.parse(localStorage.getItem("sbcSolverSettings") || "{}");
@@ -328,7 +328,7 @@ GM_addStyle(`
         } catch (e) { return undefined; }
     };
 
-    // ─── Settings Panel (standalone mode) ────────────────────────────────────────
+    // ─── 设置面板 / Settings Panel ────────────────────────────────────────────────
     const SETTINGS_DEFAULTS = {
         excludeSbc: false,
         excludeObjective: false,
@@ -438,7 +438,7 @@ GM_addStyle(`
         document.body.appendChild(overlay);
     };
 
-    // ─── Fixed / Locked Items ─────────────────────────────────────────────────────
+    // ─── 固定/锁定球员 / Fixed / Locked Items ────────────────────────────────────
     const FIXED_ITEMS_KEY = "fixeditems";
 
     const getFixedItems = () => {
@@ -454,7 +454,7 @@ GM_addStyle(`
     const isItemFixed = (item) => getFixedItems().includes(item.id);
     const isItemLocked = (item) => getLockedItems().includes(item.definitionId);
 
-    // ─── Player Fetching ──────────────────────────────────────────────────────────
+    // ─── 球员获取 / Player Fetching ───────────────────────────────────────────────
     const searchClub = ({ count, level, rarities, offset, sort }) => {
         const searchCriteria = new UTBucketedItemSearchViewModel().searchCriteria;
         if (count) searchCriteria.count = count;
@@ -510,7 +510,7 @@ GM_addStyle(`
         });
     };
 
-    // ─── Squad Rating Formula ─────────────────────────────────────────────────────
+    // ─── 球队评分公式 / Squad Rating Formula ─────────────────────────────────────
     const calcSquadRating = (ratings) => {
         const total = ratings.reduce((a, b) => a + b, 0);
         const avg = total / 11;
@@ -518,7 +518,7 @@ GM_addStyle(`
         return Math.min(Math.max(Math.floor((total + excess + 0.5) / 11), 0), 99);
     };
 
-    // ─── Chemistry Calculation ────────────────────────────────────────────────────
+    // ─── 化学值计算 / Chemistry Calculation ──────────────────────────────────────
     const teamId_bucket   = [[0,1],[2,3],[4,6],[7,11]];
     const leagueId_bucket = [[0,2],[3,4],[5,7],[8,11]];
     const nationId_bucket = [[0,1],[2,4],[5,7],[8,11]];
@@ -570,10 +570,10 @@ GM_addStyle(`
         return { totalChem, playerChems };
     };
 
-    // ─── Constraint Checking ──────────────────────────────────────────────────────
+    // ─── 约束检查 / Constraint Checking ──────────────────────────────────────────
     const checkConstraints = (squad, formation, constraints) => {
         const players = squad.filter(Boolean);
-        // Must have all non-brick slots filled (formation[i] !== -1 means it's a real slot)
+        // 所有非brick位置必须填满（formation[i] !== -1 表示真实位置）/ Must have all non-brick slots filled (formation[i] !== -1 means it's a real slot)
         const requiredSlots = formation.filter(f => f !== -1).length;
         if (players.length < requiredSlots) return false;
 
@@ -679,7 +679,7 @@ GM_addStyle(`
         return true;
     };
 
-    // ─── Cost Calculation ─────────────────────────────────────────────────────────
+    // ─── 费用计算 / Cost Calculation ─────────────────────────────────────────────
     const squadCost = (squad) => {
         return squad.reduce((total, p) => {
             if (!p || p.isFixed) return total;
@@ -687,7 +687,7 @@ GM_addStyle(`
         }, 0);
     };
 
-    // ─── Pre-filter player pool by "all 11" constraints ──────────────────────────
+    // ─── 按全队约束预过滤球员池 / Pre-filter player pool by "all 11" constraints ──
     const preFilterPlayers = (players, constraints, totalSlots) => {
         let pool = players;
         for (const req of constraints) {
@@ -720,12 +720,12 @@ GM_addStyle(`
         return pool;
     };
 
-    // ─── Greedy Initial Solution ──────────────────────────────────────────────────
+    // ─── 贪心初始解 / Greedy Initial Solution ────────────────────────────────────
     const greedySolve = (players, sbcData) => {
         const { formation, brickIndices, constraints } = sbcData;
         const squad = new Array(11).fill(null);
 
-        // Place bricks first
+        // 先放置固定球员 / Place bricks first
         for (const idx of brickIndices) {
             const brickId = sbcData.currentSolution[idx];
             if (brickId) {
@@ -734,11 +734,11 @@ GM_addStyle(`
             }
         }
 
-        // Pre-filter pool by "all 11" constraints
+        // 按全队约束预过滤球员池 / Pre-filter pool by "all 11" constraints
         const totalSlots = formation.filter(f => f !== -1).length;
         const filteredPlayers = preFilterPlayers(players, constraints, totalSlots);
 
-        // Sort by price ascending
+        // 按价格升序排列 / Sort by price ascending
         const available = filteredPlayers
             .filter(p => !p.isFixed || brickIndices.some(bi => sbcData.currentSolution[bi] === p.id))
             .filter(p => !isItemLocked(p))
@@ -767,7 +767,7 @@ GM_addStyle(`
         return squad;
     };
 
-    // ─── Heuristic score for guiding search toward feasibility ───────────────────
+    // ─── 引导搜索趋向可行解的启发式评分 / Heuristic score for guiding search toward feasibility ─
     const feasibilityScore = (squad, formation, constraints) => {
         const players = squad.filter(Boolean);
         if (players.length === 0) return -Infinity;
@@ -833,7 +833,7 @@ GM_addStyle(`
         return score;
     };
 
-    // ─── Hill Climbing Local Search ───────────────────────────────────────────────
+    // ─── 爬山局部搜索 / Hill Climbing Local Search ────────────────────────────────
     let _localSearchCount = 0;
     const localSearch = async (initialSquad, players, sbcData, maxIter = HILL_CLIMB_MAX_ITER, onProgress = null) => {
         const _lsId = ++_localSearchCount;
@@ -857,6 +857,9 @@ GM_addStyle(`
             .filter(p => !isItemLocked(p))
             .sort((a, b) => (a.price || 15000000) - (b.price || 15000000));
 
+        // 阶段1：多次内部重启，每次从initialSquad重新开始。
+        // 每次ILS扰动带来真正不同的探索，
+        // 为阶段2提供不同起点以跳出局部最优。
         // Phase 1: multiple inner restarts, each starting fresh from initialSquad.
         // Each ILS perturbation leads to genuinely different explorations,
         // giving Phase 2 different starting points to escape local optima.
@@ -881,7 +884,7 @@ GM_addStyle(`
                 for (let slot = 0; slot < 11; slot++) {
                     if (brickIndices.includes(slot) || formation[slot] === -1) continue;
                     const slotPos = formation[slot];
-                    // Try position-matched first, fall back to any player if pool is too small
+                    // 位置池为空时回退到任意球员 / Try position-matched first, fall back to any player if pool is too small
                     const p = shuffled.find(p => !usedDbIds.has(p.databaseId) && (!strictPosition || p.possiblePositions.includes(slotPos)))
                            || shuffled.find(p => !usedDbIds.has(p.databaseId));
                     if (p) { localSquad[slot] = p; usedDbIds.add(p.databaseId); }
@@ -901,7 +904,7 @@ GM_addStyle(`
                     !usedDbIds.has(p.databaseId) &&
                     (!strictPosition || p.possiblePositions.includes(slotPos))
                 );
-                // Fall back to any available player if position-strict pool is empty
+                // 位置不匹配时回退到任意球员 / Fall back to any available player if position-strict pool is empty
                 const finalCandidates = candidates.length > 0 ? candidates : available.filter(p => !usedDbIds.has(p.databaseId));
                 if (finalCandidates.length === 0) continue;
 
@@ -935,7 +938,7 @@ GM_addStyle(`
 
         if (bestCost === Infinity) return { squad: bestSquad, cost: bestCost, feasible: false, lsId: _lsId };
 
-        // Phase 2: systematic greedy cost minimization - shuffle slot order each pass
+        // 阶段2：系统性贪心降费——每轮随机打乱位置顺序 / Phase 2: systematic greedy cost minimization - shuffle slot order each pass
         const freeSlotOrder = [];
         for (let i = 0; i < 11; i++) {
             if (!brickIndices.includes(i) && formation[i] !== -1) freeSlotOrder.push(i);
@@ -973,7 +976,7 @@ GM_addStyle(`
         return { squad: bestSquad, cost: bestCost, feasible: true, lsId: _lsId };
     };
 
-    // ─── Price Display ────────────────────────────────────────────────────────────
+    // ─── 价格显示 / Price Display ─────────────────────────────────────────────────
     const appendPricesToSquad = (squadSlots) => {
         if (!cachedPriceItems || !squadSlots?.length) return;
         squadSlots.forEach(({ rootElement, item }) => {
@@ -1016,7 +1019,7 @@ GM_addStyle(`
         return result;
     };
 
-    // ─── Save Squad ───────────────────────────────────────────────────────────────
+    // ─── 保存阵容 / Save Squad ────────────────────────────────────────────────────
     const saveSquad = async (_challenge, _squad, solutionPlayers) => {
         _squad.removeAllItems();
         _squad.setPlayers(solutionPlayers, true);
@@ -1045,7 +1048,7 @@ GM_addStyle(`
         });
     };
 
-    // ─── Main Offline Solver ──────────────────────────────────────────────────────
+    // ─── 离线求解主函数 / Main Offline Solver ─────────────────────────────────────
     const offlineSolveSBC = async (_challenge) => {
         showLoader();
         const solveStart = Date.now();
@@ -1056,7 +1059,7 @@ GM_addStyle(`
         showNotification("Offline solver starting...", UINotificationType.POSITIVE);
 
         try {
-            // Build sbcData from challenge
+            // 从挑战赛构建sbcData / Build sbcData from challenge
             const challengeRequirements = _challenge.eligibilityRequirements.map(eligibility => {
                 const keys = Object.keys(eligibility.kvPairs._collection);
                 return {
@@ -1076,18 +1079,18 @@ GM_addStyle(`
                 currentSolution: _challenge.squad._players.map(m => m._item._metaData?.id).slice(0, 11),
             };
 
-            // Fetch club players + storage (unassigned) players
+            // 获取俱乐部球员 + 仓库（未分配）球员 / Fetch club players + storage (unassigned) players
             const [clubPlayers, storagePlayers] = await Promise.all([fetchPlayers(), getStoragePlayers()]);
-            // Mark storage players so price discount can be applied
+            // 标记仓库球员以便应用折扣 / Mark storage players so price discount can be applied
             storagePlayers.forEach(p => { p.isStorage = true; });
-            // Merge: storage replaces club version of same definitionId (storage gets discount)
+            // 合并：仓库版本替换俱乐部同definitionId球员（仓库享受折扣）/ Merge: storage replaces club version of same definitionId (storage gets discount)
             const storageDefIds = new Set(storagePlayers.map(p => p.definitionId));
             const rawPlayers = [
                 ...clubPlayers.filter(p => !storageDefIds.has(p.definitionId)),
                 ...storagePlayers,
             ];
 
-            // Collect active squad player IDs to exclude
+            // 收集当前上场阵容球员ID以排除 / Collect active squad player IDs to exclude
             const activeSquadPlayerIds = new Set();
             try {
                 repositories.Squad.squads
@@ -1097,21 +1100,21 @@ GM_addStyle(`
                     .forEach(p => { if (p.item?.id > 0) activeSquadPlayerIds.add(p.item.id); });
             } catch (e) {}
 
-            // Load price cache async
+            // 异步加载价格缓存 / Load price cache async
             await loadPriceItems();
-            // Fetch prices from transfer market if main script is not running
+            // ai-sbc脚本未运行时从转会市场抓取价格 / Fetch prices from transfer market if ai-sbc script is not running
             if (!isAiSBCRunning() && Object.keys(cachedPriceItems).length < 10) {
                 updateProgress("获取球员价格...");
                 await fetchAndCachePrices(rawPlayers, updateProgress);
             }
-            // Fill missing CBR entries (ratings < 45 not covered by main script)
+            // 补全缺失的CBR条目（ai-sbc脚本未覆盖45以下评分）/ Fill missing CBR entries (ratings < 45 not covered by ai-sbc script)
             for (let i = 1; i <= 81; i++) {
                 if (!cachedPriceItems[i + "_CBR"] || !cachedPriceItems[i + "_CBR"].price) {
                     cachedPriceItems[i + "_CBR"] = { price: i < 75 ? 200 : 400 };
                 }
             }
 
-            // Setup chem util for normalizeClubId and maxChem
+            // 初始化化学值工具（normalizeClubId和maxChem）/ Setup chem util for normalizeClubId and maxChem
             const chemUtil = new UTSquadChemCalculatorUtils();
             chemUtil.chemService = services.Chemistry;
             chemUtil.teamConfigRepo = repositories.TeamConfig;
@@ -1121,7 +1124,7 @@ GM_addStyle(`
                 if (!item.groups || !item.groups.length) item.groups = [0];
             });
 
-            // Read shared settings
+            // 读取共享设置 / Read shared settings
             const excludeSbc        = getSharedSettings("excludeSbc")        || false;
             const excludeObjective  = getSharedSettings("excludeObjective")  || false;
             const excludeSpecial    = getSharedSettings("excludeSpecial")    || false;
@@ -1131,7 +1134,7 @@ GM_addStyle(`
             const duplicateDiscount   = getSharedSettings("duplicateDiscount")   ?? 50;
             const untradeableDiscount = getSharedSettings("untradeableDiscount") ?? 80;
 
-            // Map to solver format, filtering loans/timelimited/settings
+            // 映射为求解器格式，过滤租借/限时/设置排除的球员 / Map to solver format, filtering loans/timelimited/settings
             const players = rawPlayers
                 .filter(item => item.isPlayer && item.isPlayer())
                 .filter(item => item.loans < 0)
@@ -1184,7 +1187,7 @@ GM_addStyle(`
                 return;
             }
 
-            // Iterative rating window: start tight [target-1, target+1], expand by 1 each side until solution found
+            // 迭代评分窗口：从紧窗口[target-1, target+1]开始，每次各扩展1直到找到可行解 / Iterative rating window: start tight [target-1, target+1], expand by 1 each side until solution found
             const ratingReq = sbcData.constraints.find(r => r.requirementKey === "TEAM_RATING" && r.scope === "GREATER");
             const ratingTarget = ratingReq ? ratingReq.eligibilityValues[0] : 0;
             const maxFloorDrop = ratingTarget >= 84 ? 4 : (ratingTarget > 0 ? 99 : 0);
@@ -1192,7 +1195,7 @@ GM_addStyle(`
             let bestResult = { feasible: false, cost: Infinity };
             let bestCappedPlayers = players;
 
-            // Check if current squad already satisfies constraints
+            // 检查当前阵容是否已满足约束 / Check if current squad already satisfies constraints
             const playerById = new Map(players.map(p => [p.id, p]));
             const currentSquad = _challenge.squad._players.slice(0, 11).map(m => playerById.get(m._item?.id) || null);
             if (checkConstraints(currentSquad, sbcData.formation, sbcData.constraints)) {
@@ -1201,7 +1204,7 @@ GM_addStyle(`
                 console.log(`[offline] current squad is feasible, skipping search, cost=${bestResult.cost}`);
             }
 
-            // Find the minimum window that yields a feasible solution
+            // 寻找能产生可行解的最小评分窗口 / Find the minimum window that yields a feasible solution
             const maxPlayerRating = ratingTarget > 0 ? Math.max(...players.map(p => p.rating)) : 99;
             if (!bestResult.feasible) for (let expand = 0; expand <= 99; expand++) {
                 const cap = ratingTarget > 0 ? ratingTarget + 1 + expand : 99;
@@ -1231,7 +1234,7 @@ GM_addStyle(`
                 const result = await localSearch(squad, cappedPlayers, sbcData, undefined, lsProgressCb);
                 if (result.feasible) {
                     if (result.cost < bestResult.cost) { bestCappedPlayers = cappedPlayers; bestResult = result; }
-                    // Try one more expansion to find cheaper solution with wider player pool
+                    // 再尝试一次扩展以用更大球员池找到更便宜的解 / Try one more expansion to find cheaper solution with wider player pool
                     const cap2 = ratingTarget > 0 ? cap + 1 : 99;
                     const floorDrop2 = ratingTarget > 0 ? Math.min(expand + 1, maxFloorDrop) : 0;
                     const ratingFloor2 = ratingTarget > 0 ? ratingTarget - 1 - floorDrop2 : 0;
@@ -1254,7 +1257,7 @@ GM_addStyle(`
                 return;
             }
 
-            // Iterated Local Search: stop after 15 consecutive rounds with no improvement
+            // 迭代局部搜索：连续15轮无改善则停止 / Iterated Local Search: stop after 15 consecutive rounds with no improvement
             const ILS_NO_IMPROVE_LIMIT = 15;
             let ilsNoImprove = 0;
             let ilsIter = 0;
@@ -1287,7 +1290,7 @@ GM_addStyle(`
                 }
             }
 
-            // Rating downgrade pass: replace highest-rated player with lowest-rated valid substitute
+            // 评分降级：用最低评分的有效替补替换最高评分球员 / Rating downgrade pass: replace highest-rated player with lowest-rated valid substitute
             if (ratingTarget > 0) {
                 const { formation, brickIndices, constraints } = sbcData;
                 const downgradPool = bestCappedPlayers
@@ -1332,7 +1335,7 @@ GM_addStyle(`
                 bestResult = { ...bestResult, squad: current };
             }
 
-            // Build solution player list for saveSquad
+            // 构建saveSquad所需的球员列表 / Build solution player list for saveSquad
             console.log(`[final] selected localSearch #${bestResult.lsId} cost=${bestResult.cost}`);
             const _squad = getControllerInstance()?._squad || getControllerInstance()?._challenge?.squad;
             if (!_squad) {
@@ -1367,7 +1370,7 @@ GM_addStyle(`
         }
     };
 
-    // ─── Button Injection ─────────────────────────────────────────────────────────
+    // ─── 按钮注入 / Button Injection ─────────────────────────────────────────────
     const squadDetailPanelViewInit = UTSBCSquadDetailPanelView.prototype.init;
     UTSBCSquadDetailPanelView.prototype.init = function (...args) {
         const response = squadDetailPanelViewInit.call(this, ...args);
@@ -1384,7 +1387,7 @@ GM_addStyle(`
         offlineBtn.style.flex = "1";
         offlineBtn.classList.add("mini");
 
-        // Settings gear button (only when main script is not running)
+        // 仅ai-sbc脚本未运行时显示设置齿轮按钮 / Settings gear button (only when ai-sbc script is not running)
         const settingsBtn = !isAiSBCRunning() ? createButton("idOfflineSbcSettings", "⚙", () => {
             showSettingsPanel();
         }, "btn-standard") : null;
@@ -1395,13 +1398,13 @@ GM_addStyle(`
             settingsBtn.style.padding = "0";
         }
 
-        // Find the existing button container and append
+        // 找到现有按钮容器并追加 / Find the existing button container and append
         const existingBtn = document.getElementById("idSolveSbcNC");
         if (existingBtn && existingBtn.parentNode) {
             existingBtn.parentNode.appendChild(offlineBtn);
             if (settingsBtn) existingBtn.parentNode.appendChild(settingsBtn);
-        } else {
-            // Fallback: insert before exchange button
+            } else {
+            // 回退：插入到兑换按钮前 / Fallback: insert before exchange button
             try {
                 const container = document.createElement("div");
                 container.style.display = "flex";
