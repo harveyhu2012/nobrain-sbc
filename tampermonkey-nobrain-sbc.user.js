@@ -7,6 +7,10 @@
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
 // @grant        GM_addStyle
+// @grant        GM_xmlhttpRequest
+// @connect      fut.gg
+// @connect      futgg-e6y.pages.dev
+// @connect      enhancer-api.futnext.com
 // ==/UserScript==
 
 GM_addStyle(`
@@ -24,6 +28,65 @@ GM_addStyle(`
         font-size: 13px;
         pointer-events: none;
     }
+    .aisbc-price-label {
+        position: absolute;
+        bottom: 2px;
+        right: 4px;
+        font-size: 10px;
+        color: #f5c518;
+        background: rgba(0,0,0,0.55);
+        padding: 0 3px;
+        border-radius: 3px;
+        pointer-events: none;
+        z-index: 10;
+    }
+    .aisbc-settings-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.6);
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .aisbc-settings-card {
+        background: var(--ut-color-background-primary, #1a1a2e);
+        color: var(--ut-color-text-primary, #fff);
+        border-radius: 8px;
+        padding: 24px;
+        min-width: 320px;
+        max-width: 420px;
+        width: 90%;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    }
+    .aisbc-settings-card h2 {
+        margin: 0 0 16px;
+        font-size: 16px;
+        font-weight: bold;
+    }
+    .aisbc-settings-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+        font-size: 13px;
+    }
+    .aisbc-settings-row label { flex: 1; }
+    .aisbc-settings-row input[type=number] {
+        width: 70px;
+        background: var(--ut-color-background-secondary, #2a2a3e);
+        color: inherit;
+        border: 1px solid var(--ut-color-border, #444);
+        border-radius: 4px;
+        padding: 4px 6px;
+        font-size: 13px;
+    }
+    .aisbc-settings-footer {
+        display: flex;
+        gap: 8px;
+        margin-top: 20px;
+        justify-content: flex-end;
+    }
 `);
 
 (function () {
@@ -32,6 +95,9 @@ GM_addStyle(`
     // ─── Constants ───────────────────────────────────────────────────────────────
     const DEFAULT_SEARCH_BATCH_SIZE = 91;
     const HILL_CLIMB_MAX_ITER = 5000;
+
+    // ─── AI-SBC Detection ────────────────────────────────────────────────────────
+    const isAiSBCRunning = () => typeof window.fetchLivePlayerPrice === 'function';
 
     // ─── Utilities ───────────────────────────────────────────────────────────────
     const showNotification = (message, type) => {
@@ -126,12 +192,250 @@ GM_addStyle(`
         return cachedPriceItems[item.definitionId]?.price || null;
     };
 
+    // ─── Price Fetching ───────────────────────────────────────────────────────────
+
+    const savePriceItems = () => {
+        return new Promise((resolve) => {
+            const request = indexedDB.open("futSBCDatabase", 2);
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains("priceItems")) {
+                    db.createObjectStore("priceItems");
+                }
+            };
+            request.onsuccess = (event) => {
+                const db = event.target.result;
+                const tx = db.transaction(["priceItems"], "readwrite");
+                const store = tx.objectStore("priceItems");
+                store.put({ data: cachedPriceItems }, "allPriceItems");
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => resolve();
+            };
+            request.onerror = () => resolve();
+        });
+    };
+
+    const updateCBRMinPrice = () => {
+        if (!cachedPriceItems) return;
+        const minByRating = new Map();
+        for (const key of Object.keys(cachedPriceItems)) {
+            if (key.endsWith("_CBR")) continue;
+            const entry = cachedPriceItems[key];
+            if (!entry || typeof entry.rating !== "number") continue;
+            if (!entry.price || entry.isExtinct) continue;
+            const currentMin = minByRating.get(entry.rating) ?? Infinity;
+            if (entry.price < currentMin) minByRating.set(entry.rating, entry.price);
+        }
+        for (const [rating, minPrice] of minByRating.entries()) {
+            const cbrKey = `${rating}_CBR`;
+            const existing = cachedPriceItems[cbrKey] || {};
+            cachedPriceItems[cbrKey] = { ...existing, eaId: cbrKey, rating, price: minPrice, timeStamp: new Date(), isExtinct: false };
+        }
+        savePriceItems();
+    };
+
+    const PriceItem = (items) => {
+        if (!cachedPriceItems) cachedPriceItems = {};
+        const timeStamp = new Date(Date.now());
+        for (let key in items) {
+            items[key]["timeStamp"] = timeStamp;
+            const eaId = items[key]["eaId"];
+            cachedPriceItems[eaId] = items[key];
+        }
+        updateCBRMinPrice();
+        savePriceItems();
+        return cachedPriceItems;
+    };
+
+    const getUserPlatform = () => {
+        try {
+            if (services.User.getUser().getSelectedPersona().isPC) return "pc";
+        } catch (e) { /* ignore */ }
+        return "ps";
+    };
+
+    const isPriceOld = (item) => {
+        if (!cachedPriceItems || !(item?.definitionId in cachedPriceItems)) return true;
+        const FRESH_MS = 60 * 60 * 1000; // 1 hour
+        const timeStamp = new Date(cachedPriceItems[item.definitionId]?.timeStamp);
+        if (!timeStamp.getTime()) return true;
+        return (timeStamp.getTime() + FRESH_MS) < Date.now();
+    };
+
+    const externalRequest = (method, url) => new Promise((resolve, reject) => {
+        GM_xmlhttpRequest({
+            method,
+            url,
+            onload: (r) => resolve(r.responseText),
+            onerror: reject,
+        });
+    });
+
+    const fetchAndCachePrices = async (players, onProgress) => {
+        const idsArray = players
+            .filter((f) => isPriceOld(f) && f?.isPlayer?.())
+            .map((p) => p.definitionId);
+
+        if (idsArray.length === 0) return;
+
+        const platform = getUserPlatform();
+        const BATCH_SIZE = 20;
+        const batches = [];
+        const tempIds = [...idsArray];
+        while (tempIds.length) batches.push(tempIds.splice(0, BATCH_SIZE));
+
+        let done = 0;
+        for (const batch of batches) {
+            try {
+                let priceResponse = {};
+                if (platform === "pc") {
+                    const params = batch.join("_");
+                    const json = JSON.parse(await externalRequest("GET", `https://enhancer-api.futnext.com/players/prices?ids=${params}&platform=pc`));
+                    const priceMap = new Map();
+                    json.forEach(item => { if (item.prices?.length) priceMap.set(item.definitionId, item.prices[0]); });
+                    batch.forEach((definitionId, index) => {
+                        const player = players.find(p => p.definitionId === definitionId);
+                        if (!player) return;
+                        const price = priceMap.get(definitionId);
+                        priceResponse[index] = { eaId: definitionId, price: price || null, rating: player.rating || 0, name: player._staticData?.name || "", isExtinct: !price, lastChecked: Date.now() };
+                    });
+                } else {
+                    const params = batch.join("%2C");
+                    const apiProxy = getOwnSettings().apiProxy ?? SETTINGS_DEFAULTS.apiProxy;
+                    const baseUrl = apiProxy ? `${apiProxy}?futggapi=` : "https://www.fut.gg/api/fut/";
+                    const json = JSON.parse(await externalRequest("GET", `${baseUrl}player-prices/26/?ids=${params}`));
+                    if (json.data && Array.isArray(json.data)) {
+                        json.data.forEach((item, index) => { priceResponse[index] = item; });
+                    }
+                    for (let key in priceResponse) {
+                        const matchingPlayer = players.find(p => p.definitionId == priceResponse[key]["eaId"]);
+                        priceResponse[key].rating = matchingPlayer?.rating || 0;
+                        priceResponse[key].name = matchingPlayer?._staticData?.name || "";
+                    }
+                }
+                PriceItem(priceResponse);
+                done += batch.length;
+                if (onProgress) onProgress(`获取价格 ${done}/${idsArray.length}...`);
+            } catch (e) { /* skip failed batch */ }
+        }
+    };
+
     // ─── Shared Settings ──────────────────────────────────────────────────────────
     const getSharedSettings = (id) => {
         try {
             const s = JSON.parse(localStorage.getItem("sbcSolverSettings") || "{}");
             return s?.sbcSettings?.[0]?.[0]?.[id] ?? s?.[id];
         } catch (e) { return undefined; }
+    };
+
+    // ─── Settings Panel (standalone mode) ────────────────────────────────────────
+    const SETTINGS_DEFAULTS = {
+        excludeSbc: false,
+        excludeObjective: false,
+        excludeSpecial: false,
+        excludeTradable: false,
+        excludeExtinct: false,
+        showPrices: true,
+        duplicateDiscount: 50,
+        untradeableDiscount: 80,
+        apiProxy: "https://www.fut.gg/api/fut/",
+    };
+
+    const getOwnSettings = () => {
+        try {
+            const s = JSON.parse(localStorage.getItem("sbcSolverSettings") || "{}");
+            return s?.sbcSettings?.[0]?.[0] || {};
+        } catch (e) { return {}; }
+    };
+
+    const saveOwnSettings = (obj) => {
+        try {
+            const s = JSON.parse(localStorage.getItem("sbcSolverSettings") || "{}");
+            if (!s.sbcSettings) s.sbcSettings = [[{}]];
+            if (!s.sbcSettings[0]) s.sbcSettings[0] = [{}];
+            if (!s.sbcSettings[0][0]) s.sbcSettings[0][0] = {};
+            Object.assign(s.sbcSettings[0][0], obj);
+            localStorage.setItem("sbcSolverSettings", JSON.stringify(s));
+        } catch (e) { /* ignore */ }
+    };
+
+    const showSettingsPanel = () => {
+        const existing = document.getElementById("aisbc-settings-overlay");
+        if (existing) { existing.remove(); return; }
+
+        const current = { ...SETTINGS_DEFAULTS, ...getOwnSettings() };
+
+        const overlay = document.createElement("div");
+        overlay.id = "aisbc-settings-overlay";
+        overlay.className = "aisbc-settings-overlay";
+
+        const TOGGLES = [
+            ["excludeSbc", "排除 SBC 球员"],
+            ["excludeObjective", "排除目标球员"],
+            ["excludeSpecial", "排除特殊球员"],
+            ["excludeTradable", "排除可交易球员"],
+            ["excludeExtinct", "排除绝版球员"],
+            ["showPrices", "显示球员价格"],
+        ];
+        const NUMBERS = [
+            ["duplicateDiscount", "重复球员折扣 (%)"],
+            ["untradeableDiscount", "不可交易折扣 (%)"],
+        ];
+        const TEXTS = [
+            ["apiProxy", "API 代理地址"],
+        ];
+
+        const toggleRows = TOGGLES.map(([key, label]) => `
+            <div class="aisbc-settings-row">
+                <label>${label}</label>
+                <input type="checkbox" id="aisbc-${key}" ${current[key] ? "checked" : ""}>
+            </div>`).join("");
+
+        const numberRows = NUMBERS.map(([key, label]) => `
+            <div class="aisbc-settings-row">
+                <label>${label}</label>
+                <input type="number" id="aisbc-${key}" value="${current[key]}" min="0" max="100">
+            </div>`).join("");
+
+        const textRows = TEXTS.map(([key, label]) => `
+            <div class="aisbc-settings-row">
+                <label>${label}</label>
+                <input type="text" id="aisbc-${key}" value="${current[key] || ""}" style="width:200px;font-size:11px;">
+            </div>`).join("");
+
+        overlay.innerHTML = `
+            <div class="aisbc-settings-card">
+                <h2>⚙ Nobrain SBC 设置</h2>
+                ${toggleRows}
+                ${numberRows}
+                ${textRows}
+                <div class="aisbc-settings-footer">
+                    <button class="btn-standard mini" id="aisbc-settings-save"><span class="button__text">保存</span></button>
+                    <button class="btn-standard mini" id="aisbc-settings-close"><span class="button__text">关闭</span></button>
+                </div>
+            </div>`;
+
+        overlay.addEventListener("click", (e) => {
+            if (e.target === overlay) overlay.remove();
+        });
+        overlay.querySelector("#aisbc-settings-close").addEventListener("click", () => overlay.remove());
+        overlay.querySelector("#aisbc-settings-save").addEventListener("click", () => {
+            const result = {};
+            TOGGLES.forEach(([key]) => {
+                result[key] = overlay.querySelector(`#aisbc-${key}`).checked;
+            });
+            NUMBERS.forEach(([key]) => {
+                result[key] = Number(overlay.querySelector(`#aisbc-${key}`).value);
+            });
+            TEXTS.forEach(([key]) => {
+                result[key] = overlay.querySelector(`#aisbc-${key}`).value.trim();
+            });
+            saveOwnSettings(result);
+            overlay.remove();
+            showNotification("设置已保存", UINotificationType.POSITIVE);
+        });
+
+        document.body.appendChild(overlay);
     };
 
     // ─── Fixed / Locked Items ─────────────────────────────────────────────────────
@@ -669,6 +973,49 @@ GM_addStyle(`
         return { squad: bestSquad, cost: bestCost, feasible: true, lsId: _lsId };
     };
 
+    // ─── Price Display ────────────────────────────────────────────────────────────
+    const appendPricesToSquad = (squadSlots) => {
+        if (!cachedPriceItems || !squadSlots?.length) return;
+        squadSlots.forEach(({ rootElement, item }) => {
+            if (!item || !item.definitionId) return;
+            const old = rootElement.querySelector(".aisbc-price-label");
+            if (old) old.remove();
+            const entry = cachedPriceItems[item.definitionId];
+            if (!entry || !entry.price) return;
+            const label = document.createElement("div");
+            label.className = "aisbc-price-label";
+            const p = entry.price;
+            label.textContent = p.toLocaleString();
+            const cbrEntry = cachedPriceItems[item.rating + "_CBR"];
+            const cbrPrice = cbrEntry?.price || 0;
+            const minPrice = Math.max(cbrPrice, item?._itemPriceLimits?.minimum || 0);
+            if (!entry.isExtinct && !entry.isObjective && minPrice > 0 && p <= minPrice * 1.1) {
+                label.style.color = "#00a651";
+            }
+            rootElement.prepend(label);
+        });
+    };
+
+    const _origSetSlots = UTSquadPitchView.prototype.setSlots;
+    UTSquadPitchView.prototype.setSlots = function (...args) {
+        const result = _origSetSlots.call(this, ...args);
+        const showPrices = getSharedSettings("showPrices") ?? SETTINGS_DEFAULTS.showPrices;
+        if (!isAiSBCRunning() && showPrices) {
+            const slots = this.getSlotViews();
+            const squadSlots = [];
+            slots.forEach((slot, index) => {
+                const item = args[0]?.[index];
+                if (item) squadSlots.push({ item: item._item, rootElement: slot.getRootElement() });
+            });
+            loadPriceItems().then(async () => {
+                const missing = squadSlots.map(s => s.item).filter(item => item && !cachedPriceItems[item.definitionId]?.price);
+                if (missing.length) await fetchAndCachePrices(missing);
+                appendPricesToSquad(squadSlots);
+            });
+        }
+        return result;
+    };
+
     // ─── Save Squad ───────────────────────────────────────────────────────────────
     const saveSquad = async (_challenge, _squad, solutionPlayers) => {
         _squad.removeAllItems();
@@ -752,6 +1099,11 @@ GM_addStyle(`
 
             // Load price cache async
             await loadPriceItems();
+            // Fetch prices from transfer market if main script is not running
+            if (!isAiSBCRunning() && Object.keys(cachedPriceItems).length < 10) {
+                updateProgress("获取球员价格...");
+                await fetchAndCachePrices(rawPlayers, updateProgress);
+            }
             // Fill missing CBR entries (ratings < 45 not covered by main script)
             for (let i = 1; i <= 81; i++) {
                 if (!cachedPriceItems[i + "_CBR"] || !cachedPriceItems[i + "_CBR"].price) {
@@ -1032,10 +1384,22 @@ GM_addStyle(`
         offlineBtn.style.flex = "1";
         offlineBtn.classList.add("mini");
 
+        // Settings gear button (only when main script is not running)
+        const settingsBtn = !isAiSBCRunning() ? createButton("idOfflineSbcSettings", "⚙", () => {
+            showSettingsPanel();
+        }, "btn-standard") : null;
+        if (settingsBtn) {
+            settingsBtn.classList.add("mini");
+            settingsBtn.style.flexShrink = "0";
+            settingsBtn.style.width = "36px";
+            settingsBtn.style.padding = "0";
+        }
+
         // Find the existing button container and append
         const existingBtn = document.getElementById("idSolveSbcNC");
         if (existingBtn && existingBtn.parentNode) {
             existingBtn.parentNode.appendChild(offlineBtn);
+            if (settingsBtn) existingBtn.parentNode.appendChild(settingsBtn);
         } else {
             // Fallback: insert before exchange button
             try {
@@ -1046,6 +1410,7 @@ GM_addStyle(`
                 container.style.padding = "0 0.5rem";
                 offlineBtn.style.flex = "1";
                 container.appendChild(offlineBtn);
+                if (settingsBtn) container.appendChild(settingsBtn);
                 this._btnExchange.__root.parentNode.insertBefore(container, this._btnExchange.__root);
             } catch (e) {
                 /* ignore injection error */
