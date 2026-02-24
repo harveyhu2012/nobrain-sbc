@@ -40,6 +40,11 @@ GM_addStyle(`
         pointer-events: none;
         z-index: 10;
     }
+    .aisbc-price-label.precious {
+        background: #ee2208;
+        border: 1px solid #fd7254;
+        color: #fff;
+    }
     .aisbc-settings-overlay {
         position: fixed;
         inset: 0;
@@ -105,16 +110,18 @@ GM_addStyle(`
         services.Notification.queue([message, t]);
     };
 
-    const getControllerInstance = () => {
-        try {
-            const controller = _appMain._rootViewController.currentController.currentController.currentController;
-            return controller.childViewControllers?.[0] || controller;
-        } catch (e) {
-            return null;
+    const cntlr = {
+        current() {
+            return _appMain?._rootViewController?.currentController?.currentController?.currentController;
+        },
+        right() {
+            return _appMain?._rootViewController?.currentController?.currentController?.currentController?.rightController?.currentController;
+        },
+        left() {
+            return _appMain?._rootViewController?.currentController?.currentController?.currentController?.leftController;
         }
     };
 
-    const isPhone = () => document.body.classList.contains("phone");
 
     const showLoader = () => {
         const clickShield = document.querySelector(".ut-click-shield");
@@ -271,9 +278,9 @@ GM_addStyle(`
         });
     });
 
-    const fetchAndCachePrices = async (players, onProgress) => {
+    const fetchAndCachePrices = async (players, onProgress, force = false) => {
         const idsArray = players
-            .filter((f) => isPriceOld(f) && f?.isPlayer?.())
+            .filter((f) => (force || isPriceOld(f)) && f?.isPlayer?.())
             .map((p) => p.definitionId);
 
         if (idsArray.length === 0) return;
@@ -929,7 +936,7 @@ GM_addStyle(`
                         localScore = newScore;
                     }
                 }
-                if (onProgress && iter % 100 === 0) {
+                if (onProgress && iter % 1000 === 0) {
                     onProgress(`restart ${restart + 1}/${INNER_RESTARTS}, iter ${iter}/${itersPerRestart}`);
                     await new Promise(r => setTimeout(r, 0));
                 }
@@ -995,6 +1002,10 @@ GM_addStyle(`
             if (!entry.isExtinct && !entry.isObjective && minPrice > 0 && p <= minPrice * 1.1) {
                 label.style.color = "#00a651";
             }
+            // 珍贵球员：价格 >= 2倍CBR底价，红色背景警示 / Precious: price >= 2x CBR, show red warning
+            if (cbrPrice > 0 && p >= cbrPrice * 2) {
+                label.classList.add("precious");
+            }
             rootElement.prepend(label);
         });
     };
@@ -1011,8 +1022,8 @@ GM_addStyle(`
                 if (item) squadSlots.push({ item: item._item, rootElement: slot.getRootElement() });
             });
             loadPriceItems().then(async () => {
-                const missing = squadSlots.map(s => s.item).filter(item => item && !cachedPriceItems[item.definitionId]?.price);
-                if (missing.length) await fetchAndCachePrices(missing);
+                const players = squadSlots.map(s => s.item).filter(item => item && item.definitionId);
+                if (players.length) await fetchAndCachePrices(players, null, true);
                 appendPricesToSquad(squadSlots);
             });
         }
@@ -1026,7 +1037,7 @@ GM_addStyle(`
         await services.SBC.saveChallenge(_challenge).observe(this, async (z, d) => {
             if (!d.success) {
                 hideLoader();
-                showNotification("Failed to save squad", UINotificationType.NEGATIVE);
+                showNotification("保存阵容失败", UINotificationType.NEGATIVE);
                 return;
             }
             services.SBC.loadChallengeData(_challenge).observe(this, async (z2, data) => {
@@ -1036,9 +1047,11 @@ GM_addStyle(`
                     const ps = squad._players.map(p => p._item);
                     _challenge.squad.setPlayers(ps, true);
                     _challenge.onDataChange.notify({ squad });
-                    if (isPhone() && _appMain._rootViewController.currentController.className === "UTSBCSquadDetailPanelViewController") {
+                    showNotification("求解完成！", UINotificationType.POSITIVE);
+                    // 保存完成后返回阵容界面（与FSU行为一致）/ Navigate back after save completes, same as FSU
+                    if (isPhone() && cntlr.current()?.className === "UTSBCSquadDetailPanelViewController") {
                         setTimeout(() => {
-                            _appMain._rootViewController.currentController.parentViewController._eBackButtonTapped();
+                            cntlr.current().parentViewController._eBackButtonTapped();
                         }, 500);
                     }
                 } catch (e) {
@@ -1048,15 +1061,15 @@ GM_addStyle(`
         });
     };
 
-    // ─── 离线求解主函数 / Main Offline Solver ─────────────────────────────────────
-    const offlineSolveSBC = async (_challenge) => {
+    // ─── 求解主函数 / Main Solver ─────────────────────────────────────────────────
+    const nobrainSolveSBC = async (_challenge) => {
         showLoader();
         const solveStart = Date.now();
         const updateProgress = (text) => {
             const elapsed = ((Date.now() - solveStart) / 1000).toFixed(1);
             updateLoaderText(`${text} (${elapsed}s)`);
         };
-        showNotification("Offline solver starting...", UINotificationType.POSITIVE);
+        showNotification("开始求解...", UINotificationType.POSITIVE);
 
         try {
             // 从挑战赛构建sbcData / Build sbcData from challenge
@@ -1146,6 +1159,7 @@ GM_addStyle(`
                 .filter(item => !(cachedPriceItems[item.definitionId]?.isObjective && excludeObjective))
                 .filter(item => !excludeLockedPlayers.includes(item.definitionId))
                 .filter(item => !(cachedPriceItems[item.definitionId]?.isExtinct && excludeExtinct))
+                .filter(item => getPrice(item) != null) // 无价格球员不参与求解 / Exclude players with no price
                 .map(item => {
                     const rawPrice = getPrice(item);
                     const cbrPrice = cachedPriceItems[item.rating + "_CBR"]?.price || 100;
@@ -1183,7 +1197,7 @@ GM_addStyle(`
 
             if (players.length === 0) {
                 hideLoader();
-                showNotification("No players found in club", UINotificationType.NEGATIVE);
+                showNotification("俱乐部中未找到球员", UINotificationType.NEGATIVE);
                 return;
             }
 
@@ -1253,7 +1267,7 @@ GM_addStyle(`
 
             if (!bestResult.feasible) {
                 hideLoader();
-                showNotification("Offline solver: no solution found", UINotificationType.NEGATIVE);
+                showNotification("求解失败：未找到可行解", UINotificationType.NEGATIVE);
                 return;
             }
 
@@ -1337,10 +1351,10 @@ GM_addStyle(`
 
             // 构建saveSquad所需的球员列表 / Build solution player list for saveSquad
             console.log(`[final] selected localSearch #${bestResult.lsId} cost=${bestResult.cost}`);
-            const _squad = getControllerInstance()?._squad || getControllerInstance()?._challenge?.squad;
+            const _squad = cntlr.current()?._squad || cntlr.current()?._challenge?.squad;
             if (!_squad) {
                 hideLoader();
-                showNotification("Could not get squad reference", UINotificationType.NEGATIVE);
+                showNotification("无法获取阵容引用", UINotificationType.NEGATIVE);
                 return;
             }
 
@@ -1362,11 +1376,10 @@ GM_addStyle(`
             });
 
             await saveSquad(_challenge, _squad, solutionPlayers);
-            showNotification("Offline solve complete!", UINotificationType.POSITIVE);
 
         } catch (e) {
             hideLoader();
-            showNotification("Offline solver error: " + e.message, UINotificationType.NEGATIVE);
+            showNotification("求解出错：" + e.message, UINotificationType.NEGATIVE);
         }
     };
 
@@ -1375,13 +1388,13 @@ GM_addStyle(`
     UTSBCSquadDetailPanelView.prototype.init = function (...args) {
         const response = squadDetailPanelViewInit.call(this, ...args);
 
-        const offlineBtn = createButton("idOfflineSolveSbc", "Offline Solve", async () => {
-            const { _challenge } = getControllerInstance();
+        const offlineBtn = createButton("idOfflineSolveSbc", "求解SBC", async () => {
+            const { _challenge } = cntlr.current();
             if (!_challenge) {
-                showNotification("No challenge found", UINotificationType.NEGATIVE);
+                showNotification("未找到挑战赛", UINotificationType.NEGATIVE);
                 return;
             }
-            await offlineSolveSBC(_challenge);
+            await nobrainSolveSBC(_challenge);
         });
 
         offlineBtn.style.flex = "1";
