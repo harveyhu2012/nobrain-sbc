@@ -621,8 +621,8 @@ GM_addStyle(`
                 if (!satisfies(cnt, count, scope)) return false;
             }
             else if (key === "PLAYER_EXACT_OVR") {
-                const cnt = players.filter(p => vals.includes(p.rating)).length;
-                if (!satisfies(cnt, count, "GREATER")) return false;
+                const cnt = players.filter(p => p.rating >= vals[0]).length;
+                if (!satisfies(cnt, count, scope)) return false;
             }
             else if (key === "PLAYER_QUALITY") {
                 const cnt = players.filter(p => satisfies(p.ratingTier, vals[0], scope)).length;
