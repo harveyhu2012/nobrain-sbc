@@ -165,8 +165,10 @@ GM_addStyle(`
         "settings.exclude":             ["排除选项", "Exclude"],
         "settings.ui":                  ["界面设置", "UI"],
         "settings.save":                ["保存", "Save"],
-        "settings.close":               ["关闭", "Close"],
         "settings.saved":               ["设置已保存", "Settings saved"],
+        "settings.close":               ["关闭", "Close"],
+        "settings.reset":               ["恢复初始", "Reset to Default"],
+        "settings.resetDone":           ["设置已恢复默认", "Settings reset to default"],
         // 设置项标签 / Setting labels
         "param.excludeSbc":             ["排除 SBC 球员", "Exclude SBC Players"],
         "param.excludeObjective":       ["排除目标球员", "Exclude Objective Players"],
@@ -634,11 +636,11 @@ GM_addStyle(`
 
     // ─── 设置面板 / Settings Panel ────────────────────────────────────────────────
     const SETTINGS_DEFAULTS = {
-        excludeSbc: false,
-        excludeObjective: false,
+        excludeSbc: true,
+        excludeObjective: true,
         excludeSpecial: false,
         excludeTradable: false,
-        excludeExtinct: false,
+        excludeExtinct: true,
         showPrices: true,
         duplicateDiscount: 50,
         untradeableDiscount: 80,
@@ -734,6 +736,7 @@ GM_addStyle(`
                 ${makeToggleRows(UI_TOGGLES)}
                 ${textRows}
                 <div class="aisbc-settings-footer">
+                    <button class="btn-standard mini" id="aisbc-settings-reset"><span class="button__text">${L("settings.reset")}</span></button>
                     <button class="btn-standard mini" id="aisbc-settings-save"><span class="button__text">${L("settings.save")}</span></button>
                     <button class="btn-standard mini" id="aisbc-settings-close"><span class="button__text">${L("settings.close")}</span></button>
                 </div>
@@ -757,6 +760,13 @@ GM_addStyle(`
             saveOwnSettings(result);
             overlay.remove();
             showNotification(L("settings.saved"), UINotificationType.POSITIVE);
+        });
+
+        overlay.querySelector("#aisbc-settings-reset").addEventListener("click", () => {
+            const excluded = getOwnSettings().excludePlayerIds;
+            saveOwnSettings({ ...SETTINGS_DEFAULTS, excludePlayerIds: excluded });
+            overlay.remove();
+            showNotification(L("settings.resetDone"), UINotificationType.POSITIVE);
         });
 
         document.body.appendChild(overlay);
