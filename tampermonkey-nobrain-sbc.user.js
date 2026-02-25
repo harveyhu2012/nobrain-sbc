@@ -1229,7 +1229,8 @@ GM_addStyle(`
             const cbrPrice = cbrEntry?.price || 0;
             const minPrice = Math.max(cbrPrice, item?._itemPriceLimits?.minimum || 0);
             if (!entry.isExtinct && !entry.isObjective && minPrice > 0 && p <= minPrice * 1.1) {
-                label.style.color = "#00a651";
+                label.style.background = "#00a651";
+                label.style.color = "#fff";
             }
             // 珍贵球员：价格 >= 2倍CBR底价，红色背景警示 / Precious: price >= 2x CBR, show red warning
             if (cbrPrice > 0 && p >= cbrPrice * 2) {
@@ -1741,7 +1742,7 @@ GM_addStyle(`
         const price = entry.price;
         const el = document.createElement("div");
         el.className = "aisbc-price-label";
-        if (isFodder(item)) el.style.color = "#00a651";
+        if (isFodder(item)) { el.style.background = "#00a651"; el.style.color = "#fff"; }
         const cbrPrice = cachedPriceItems[item.rating + "_CBR"]?.price || 0;
         if (cbrPrice > 0 && price >= cbrPrice * 2) {
             el.classList.add("precious");
