@@ -1755,7 +1755,17 @@ GM_addStyle(`
     };
 
     const getPriceDiv = (item) => {
-        if (!getSharedSettings("showPrices") || !item.definitionId || !cachedPriceItems) return null;
+        if (!getSharedSettings("showPrices") || !item.definitionId) return null;
+        if (!cachedPriceItems) {
+            if (!getPriceDiv._loading) {
+                getPriceDiv._loading = true;
+                loadPriceItems().then(() => {
+                    document.querySelectorAll(".aisbc-price-label").forEach(el => el.remove());
+                    document.querySelectorAll(".ut-item-view").forEach(el => el.dispatchEvent(new Event("aisbc-refresh")));
+                });
+            }
+            return null;
+        }
         const entry = cachedPriceItems[item.definitionId];
         if (!entry || !entry.price) return null;
         const price = entry.price;
@@ -1776,6 +1786,10 @@ GM_addStyle(`
         if (this.__root && el) this.__root.prepend(el);
         if (this.__root) {
             this.__root.classList.toggle("locked", isItemLocked(item));
+            this.__root.addEventListener("aisbc-refresh", () => {
+                const fresh = getPriceDiv(item);
+                if (fresh) this.__root.prepend(fresh);
+            }, { once: true });
         }
         return result;
     };
