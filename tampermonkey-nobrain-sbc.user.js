@@ -148,7 +148,7 @@ GM_addStyle(`
 
     // ─── 常量 / Constants ─────────────────────────────────────────────────────────
     const DEFAULT_SEARCH_BATCH_SIZE = 91;
-    const HILL_CLIMB_MAX_ITER = 5000;
+    const HILL_CLIMB_MAX_ITER = 5000; // 默认值，运行时被设置覆盖 / fallback, overridden by settings at runtime
 
     // ─── ai-sbc脚本检测 / AI-SBC Detection ──────────────────────────────────────
     const isAiSBCRunning = () => typeof window.fetchLivePlayerPrice === 'function';
@@ -530,6 +530,9 @@ GM_addStyle(`
         duplicateDiscount: 50,
         untradeableDiscount: 80,
         nobrainConceptPremium: 500,
+        hillClimbMaxIter: 5000,
+        innerRestarts: 6,
+        ilsNoImproveLimit: 15,
         apiProxy: "https://www.fut.gg/api/fut/",
     };
 
@@ -572,6 +575,9 @@ GM_addStyle(`
             ["duplicateDiscount", "重复球员折扣 (%)", 0, 100],
             ["untradeableDiscount", "不可交易折扣 (%)", 0, 100],
             ["nobrainConceptPremium", "虚拟球员价格倍率 (%)", 100, 1000],
+            ["hillClimbMaxIter", "爬山迭代次数", 100, 50000],
+            ["innerRestarts", "内部重启次数", 1, 20],
+            ["ilsNoImproveLimit", "ILS无改善上限", 1, 100],
         ];
         const UI_TOGGLES = [
             ["showPrices", "显示球员价格"],
@@ -1069,7 +1075,7 @@ GM_addStyle(`
 
     // ─── 爬山局部搜索 / Hill Climbing Local Search ────────────────────────────────
     let _localSearchCount = 0;
-    const localSearch = async (initialSquad, players, sbcData, maxIter = HILL_CLIMB_MAX_ITER, onProgress = null) => {
+    const localSearch = async (initialSquad, players, sbcData, maxIter = HILL_CLIMB_MAX_ITER, onProgress = null, numRestarts = 6) => {
         const _lsId = ++_localSearchCount;
         const { formation, brickIndices, constraints } = sbcData;
         let bestCost = checkConstraints(initialSquad, formation, constraints) ? squadCost(initialSquad) : Infinity;
@@ -1097,7 +1103,7 @@ GM_addStyle(`
         // Phase 1: multiple inner restarts, each starting fresh from initialSquad.
         // Each ILS perturbation leads to genuinely different explorations,
         // giving Phase 2 different starting points to escape local optima.
-        const INNER_RESTARTS = 6;
+        const INNER_RESTARTS = numRestarts;
         const itersPerRestart = Math.floor(maxIter / INNER_RESTARTS);
         const freeSlots1 = [];
         for (let i = 0; i < 11; i++) {
@@ -1374,7 +1380,10 @@ GM_addStyle(`
             const excludeLockedPlayers = getLockedItems();
             const duplicateDiscount   = getSharedSettings("duplicateDiscount")   ?? 50;
             const untradeableDiscount = getSharedSettings("untradeableDiscount") ?? 80;
-            const conceptPremium      = getSharedSettings("nobrainConceptPremium") ?? 200;
+            const conceptPremium      = getSharedSettings("nobrainConceptPremium") ?? 500;
+            const hillClimbMaxIter    = getSharedSettings("hillClimbMaxIter")    ?? 5000;
+            const innerRestarts       = getSharedSettings("innerRestarts")       ?? 6;
+            const ilsNoImproveLimitBase = getSharedSettings("ilsNoImproveLimit") ?? 15;
 
             // 映射为求解器格式，过滤租借/限时/设置排除的球员 / Map to solver format, filtering loans/timelimited/settings
             const players = rawPlayers
@@ -1515,7 +1524,7 @@ GM_addStyle(`
                         updateProgress(t);
                     }
                 };
-                const result = await localSearch(squad, cappedPlayers, sbcData, undefined, lsProgressCb);
+                const result = await localSearch(squad, cappedPlayers, sbcData, hillClimbMaxIter, lsProgressCb, innerRestarts);
                 if (result.feasible) {
                     if (result.cost < bestResult.cost) { bestCappedPlayers = cappedPlayers; bestResult = result; }
                     // 再尝试一次扩展以用更大球员池找到更便宜的解 / Try one more expansion to find cheaper solution with wider player pool
@@ -1524,7 +1533,7 @@ GM_addStyle(`
                     const ratingFloor2 = ratingTarget > 0 ? ratingTarget - 1 - floorDrop2 : 0;
                     const cappedPlayers2 = ratingTarget > 0 ? players.filter(p => p.rating <= cap2 && p.rating >= ratingFloor2) : players;
                     const squad2 = greedySolve(cappedPlayers2, sbcData);
-                    const result2 = await localSearch(squad2, cappedPlayers2, sbcData, undefined, lsProgressCb);
+                    const result2 = await localSearch(squad2, cappedPlayers2, sbcData, hillClimbMaxIter, lsProgressCb, innerRestarts);
                     if (result2.feasible && result2.cost < bestResult.cost) { bestCappedPlayers = cappedPlayers2; bestResult = result2; }
                     // 找到可行解后，扩展球员池到完整范围，让低分球员参与降费优化
                     // After finding feasible solution, expand pool to full range so cheap low-rated players can reduce cost
@@ -1547,10 +1556,10 @@ GM_addStyle(`
                 return;
             }
 
-            // 迭代局部搜索：连续N轮无改善则停止；有假想球员时加倍以确保高价假想球员被替换
+            // 迭代局部搜索：连续N轮无改善则停止；有虚拟球员时加倍以确保高价虚拟球员被替换
             // Iterated Local Search: stop after N rounds with no improvement; double limit when concept players present to ensure expensive ones get replaced
             const hasConceptInPool = players.some(p => p.concept);
-            const ILS_NO_IMPROVE_LIMIT = hasConceptInPool ? 30 : 15;
+            const ILS_NO_IMPROVE_LIMIT = hasConceptInPool ? ilsNoImproveLimitBase * 2 : ilsNoImproveLimitBase;
             let ilsNoImprove = 0;
             let ilsIter = 0;
             const { formation: f0, brickIndices: bi0 } = sbcData;
@@ -1562,10 +1571,10 @@ GM_addStyle(`
                 ilsIter++;
                 const perturbed = [...bestResult.squad];
                 const toPerturb = [...freeSlots].sort(() => Math.random() - 0.5).slice(0, 3);
-                const ilsBase = ilsNoImprove * HILL_CLIMB_MAX_ITER;
-                const ilsTotal = ILS_NO_IMPROVE_LIMIT * HILL_CLIMB_MAX_ITER;
+                const ilsBase = ilsNoImprove * hillClimbMaxIter;
+                const ilsTotal = ILS_NO_IMPROVE_LIMIT * hillClimbMaxIter;
                 for (const slot of toPerturb) perturbed[slot] = null;
-                const result = await localSearch(perturbed, bestCappedPlayers, sbcData, undefined, t => {
+                const result = await localSearch(perturbed, bestCappedPlayers, sbcData, hillClimbMaxIter, t => {
                     const match = t.match(/iter (\d+)/);
                     if (match) {
                         const pct = ((ilsBase + parseInt(match[1])) / ilsTotal * 100).toFixed(1);
