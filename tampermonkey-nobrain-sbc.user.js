@@ -1239,8 +1239,8 @@ GM_addStyle(`
                 label.style.color = "#fff";
                 label.style.border = "1px solid #4cdb85";
             }
-            // 珍贵球员：价格 >= 2倍CBR底价，红色背景警示 / Precious: price >= 2x CBR, show red warning
-            if (cbrPrice > 0 && p >= cbrPrice * 2) {
+            // 珍贵球员：价格 >= 2倍CBR且 >= 2倍最低限价，红色背景警示 / Precious: price >= 2x CBR and >= 2x min price limit, show red warning
+            if (isPrecious(item)) {
                 label.classList.add("precious");
             }
             rootElement.prepend(label);
@@ -1742,7 +1742,16 @@ GM_addStyle(`
             cachedPriceItems[item.rating + "_CBR"]?.price || 0,
             item?._itemPriceLimits?.minimum || 0
         );
-        return price <= fodderPrice * 1.1;
+        return fodderPrice > 0 && price <= fodderPrice * 1.1;
+    };
+
+    const isPrecious = (item) => {
+        if (!cachedPriceItems) return false;
+        const price = cachedPriceItems[item.definitionId]?.price;
+        if (!price) return false;
+        const cbrPrice = cachedPriceItems[item.rating + "_CBR"]?.price || 0;
+        const minPrice = item?._itemPriceLimits?.minimum || 0;
+        return cbrPrice > 0 && price >= cbrPrice * 2 && price >= minPrice * 2;
     };
 
     const getPriceDiv = (item) => {
@@ -1753,8 +1762,7 @@ GM_addStyle(`
         const el = document.createElement("div");
         el.className = "aisbc-price-label";
         if (isFodder(item)) { el.style.background = "#00a651"; el.style.color = "#fff"; el.style.border = "1px solid #4cdb85"; }
-        const cbrPrice = cachedPriceItems[item.rating + "_CBR"]?.price || 0;
-        if (cbrPrice > 0 && price >= cbrPrice * 2) {
+        if (isPrecious(item)) {
             el.classList.add("precious");
         }
         el.textContent = entry.isExtinct ? "绝版" : entry.isObjective ? "" : price.toLocaleString();
