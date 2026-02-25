@@ -60,14 +60,25 @@ GM_addStyle(`
         border-radius: 8px;
         padding: 24px;
         min-width: 320px;
-        max-width: 420px;
+        max-width: 480px;
         width: 90%;
+        max-height: 80vh;
+        overflow-y: auto;
         box-shadow: 0 8px 32px rgba(0,0,0,0.5);
     }
     .aisbc-settings-card h2 {
         margin: 0 0 16px;
         font-size: 16px;
         font-weight: bold;
+    }
+    .aisbc-settings-card h3 {
+        margin: 16px 0 8px;
+        font-size: 13px;
+        font-weight: bold;
+        text-transform: uppercase;
+        opacity: 0.6;
+        border-bottom: 1px solid rgba(255,255,255,0.15);
+        padding-bottom: 4px;
     }
     .aisbc-settings-row {
         display: flex;
@@ -91,6 +102,44 @@ GM_addStyle(`
         gap: 8px;
         margin-top: 20px;
         justify-content: flex-end;
+    }
+    .ms-wrap { position:relative; color:#000; font-size:14px; }
+    .ms-tags { display:flex; flex-wrap:wrap; gap:4px; min-height:30px; padding:4px; background:#f9f9f9; border:1px solid #ddd; border-radius:3px; cursor:pointer; }
+    .ms-tag { display:inline-flex; align-items:center; gap:4px; background:#000; color:#fff; border-radius:14px; padding:2px 8px; font-size:12px; }
+    .ms-tag img { width:20px; height:20px; border-radius:2px; }
+    .ms-tag-x { cursor:pointer; margin-left:2px; font-size:14px; line-height:1; opacity:.8; }
+    .ms-tag-x:hover { opacity:1; }
+    .ms-dd { display:none; position:absolute; z-index:9999; left:0; right:0; top:100%; max-height:260px; overflow-y:auto; background:#fff; border:1px solid #bbb; border-top:none; border-radius:0 0 3px 3px; }
+    .ms-wrap.ms-open .ms-dd { display:block; }
+    .ms-search { display:block; width:100%; padding:6px 8px; border:none; border-bottom:1px solid #ddd; outline:none; font-size:13px; box-sizing:border-box; }
+    .ms-opt { display:flex; align-items:center; gap:6px; padding:6px 10px; cursor:pointer; font-size:13px; }
+    .ms-opt:hover { background:#f2f2f2; }
+    .ms-opt.ms-selected { background:#e8e8e8; }
+    .ms-opt img { width:24px; height:24px; border-radius:2px; }
+    .ms-empty { padding:8px 10px; color:#999; font-size:13px; }
+    .aisbc-exclude-section { margin-top:16px; }
+    .aisbc-exclude-section h3 { font-size:13px; margin:0 0 8px; opacity:0.7; }
+    .player.locked::before {
+        font-family: 'UltimateTeam-Icons';
+        position: absolute;
+        content: '\\E09C';
+        right: 4px;
+        bottom: 18px;
+        color: #d31332;
+        font-size: 0.8em;
+        z-index: 2;
+    }
+    .item-price {
+        padding: 0 0.2rem;
+        left: 50%;
+        transform: translateX(-50%) !important;
+        white-space: nowrap;
+        background: #1e242a;
+        border: 1px solid cornflowerblue;
+        border-radius: 5px;
+        position: absolute;
+        z-index: 2;
+        color: #fff;
     }
 `);
 
@@ -335,6 +384,141 @@ GM_addStyle(`
         } catch (e) { return undefined; }
     };
 
+    // ─── 多选下拉组件 / Multi-select Dropdown ────────────────────────────────────
+    const getShellUri = (id, ratingTier) => {
+        return AssetLocationUtils.getShellUri(0, 1, id, ratingTier, repositories.Rarity._collection[id]?.guid);
+    };
+    const createChoice = (parentDiv, label, id, options) => {
+        if (document.contains(document.getElementById(id))) {
+            document.getElementById(id).remove();
+        }
+        const row = document.createElement("div");
+        row.classList.add("panelActionRow");
+        const labelDiv = document.createElement("div");
+        labelDiv.classList.add("buttonInfoLabel");
+        const choicesLabel = document.createElement("span");
+        choicesLabel.classList.add("choicesLabel");
+        choicesLabel.innerHTML = label;
+        labelDiv.appendChild(choicesLabel);
+        row.appendChild(labelDiv);
+
+        const panel = document.createElement("div");
+        panel.appendChild(row);
+        panel.setAttribute("id", id);
+
+        // Build native multi-select widget
+        const wrap = document.createElement("div");
+        wrap.className = "ms-wrap";
+        const tagsEl = document.createElement("div");
+        tagsEl.className = "ms-tags";
+        const dd = document.createElement("div");
+        dd.className = "ms-dd";
+        const searchInput = document.createElement("input");
+        searchInput.className = "ms-search";
+        searchInput.type = "text";
+        searchInput.placeholder = "搜索... / Search...";
+        const listEl = document.createElement("div");
+        dd.appendChild(searchInput);
+        dd.appendChild(listEl);
+        wrap.appendChild(tagsEl);
+        wrap.appendChild(dd);
+        panel.appendChild(wrap);
+        parentDiv.appendChild(panel);
+
+        let currentSettings = getSharedSettings(id) || [];
+        const selected = new Set(currentSettings.map(String));
+
+        const renderTags = () => {
+            tagsEl.innerHTML = "";
+            if (selected.size === 0) {
+                tagsEl.innerHTML = `<span style="opacity:.5;font-size:13px">点击选择... / Click to select...</span>`;
+                return;
+            }
+            const rendered = new Set();
+            options.forEach((opt) => {
+                const v = String(opt.value);
+                if (!selected.has(v) || rendered.has(v)) return;
+                rendered.add(v);
+                const tag = document.createElement("span");
+                tag.className = "ms-tag";
+                const icon = (opt.customProperties && opt.customProperties.icon) || "";
+                tag.innerHTML = icon + " " + opt.label +
+                    ' <span class="ms-tag-x" data-val="' + opt.value + '">&times;</span>';
+                tagsEl.appendChild(tag);
+            });
+            tagsEl.querySelectorAll(".ms-tag-x").forEach((x) => {
+                const removeTag = (e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    selected.delete(String(x.dataset.val));
+                    persist();
+                };
+                x.addEventListener("click", removeTag);
+                x.addEventListener("touchend", removeTag);
+            });
+        };
+
+        const renderList = (filter) => {
+            listEl.innerHTML = "";
+            const q = (filter || "").toLowerCase();
+            let count = 0;
+            const seen = new Set();
+            options.forEach((opt) => {
+                const v = String(opt.value);
+                if (seen.has(v)) return;
+                seen.add(v);
+                if (q && !opt.label.toLowerCase().includes(q)) return;
+                count++;
+                const el = document.createElement("div");
+                el.className = "ms-opt" + (selected.has(String(opt.value)) ? " ms-selected" : "");
+                const icon = (opt.customProperties && opt.customProperties.icon) || "";
+                el.innerHTML = icon + " " + opt.label;
+                const selectOpt = (e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    const v = String(opt.value);
+                    selected.has(v) ? selected.delete(v) : selected.add(v);
+                    persist();
+                };
+                el.addEventListener("click", selectOpt);
+                el.addEventListener("touchend", selectOpt);
+                listEl.appendChild(el);
+            });
+            if (count === 0) {
+                listEl.innerHTML = `<div class="ms-empty">无结果 / No results</div>`;
+            }
+        };
+
+        const persist = () => {
+            saveOwnSettings({ [id]: Array.from(selected).map(Number) });
+            renderTags();
+            renderList(searchInput.value);
+        };
+
+        const toggleDd = () => {
+            wrap.classList.toggle("ms-open");
+            if (wrap.classList.contains("ms-open")) {
+                searchInput.value = "";
+                renderList("");
+                searchInput.focus();
+            }
+        };
+        tagsEl.addEventListener("click", toggleDd);
+        tagsEl.addEventListener("touchend", (e) => { e.preventDefault(); toggleDd(); });
+
+        searchInput.addEventListener("input", () => renderList(searchInput.value));
+        searchInput.addEventListener("click", (e) => e.stopPropagation());
+        searchInput.addEventListener("touchend", (e) => e.stopPropagation());
+
+        const closeDd = (e) => {
+            if (!wrap.contains(e.target)) wrap.classList.remove("ms-open");
+        };
+        document.addEventListener("click", closeDd);
+        document.addEventListener("touchend", closeDd);
+
+        renderTags();
+    };
+
     // ─── 设置面板 / Settings Panel ────────────────────────────────────────────────
     const SETTINGS_DEFAULTS = {
         excludeSbc: false,
@@ -345,7 +529,7 @@ GM_addStyle(`
         showPrices: true,
         duplicateDiscount: 50,
         untradeableDiscount: 80,
-        nobrainConceptPremium: 200,
+        nobrainConceptPremium: 500,
         apiProxy: "https://www.fut.gg/api/fut/",
     };
 
@@ -377,34 +561,41 @@ GM_addStyle(`
         overlay.id = "aisbc-settings-overlay";
         overlay.className = "aisbc-settings-overlay";
 
-        const TOGGLES = [
+        const EXCLUDE_TOGGLES = [
             ["excludeSbc", "排除 SBC 球员"],
             ["excludeObjective", "排除目标球员"],
             ["excludeSpecial", "排除特殊球员"],
             ["excludeTradable", "排除可交易球员"],
             ["excludeExtinct", "排除绝版球员"],
-            ["showPrices", "显示球员价格"],
         ];
-        const NUMBERS = [
+        const ALGO_NUMBERS = [
             ["duplicateDiscount", "重复球员折扣 (%)", 0, 100],
             ["untradeableDiscount", "不可交易折扣 (%)", 0, 100],
             ["nobrainConceptPremium", "虚拟球员价格倍率 (%)", 100, 1000],
         ];
+        const UI_TOGGLES = [
+            ["showPrices", "显示球员价格"],
+        ];
         const TEXTS = [
             ["apiProxy", "API 代理地址"],
         ];
+        const TOGGLES = [...EXCLUDE_TOGGLES, ...UI_TOGGLES];
+        const NUMBERS = ALGO_NUMBERS;
 
-        const toggleRows = TOGGLES.map(([key, label]) => `
+        const makeToggleRows = (list) => list.map(([key, label]) => `
             <div class="aisbc-settings-row">
                 <label>${label}</label>
                 <input type="checkbox" id="aisbc-${key}" ${current[key] ? "checked" : ""}>
             </div>`).join("");
 
-        const numberRows = NUMBERS.map(([key, label, min = 0, max = 100]) => `
+        const makeNumberRows = (list) => list.map(([key, label, min = 0, max = 100]) => `
             <div class="aisbc-settings-row">
                 <label>${label}</label>
                 <input type="number" id="aisbc-${key}" value="${current[key]}" min="${min}" max="${max}">
             </div>`).join("");
+
+        const toggleRows = makeToggleRows(TOGGLES);
+        const numberRows = makeNumberRows(NUMBERS);
 
         const textRows = TEXTS.map(([key, label]) => `
             <div class="aisbc-settings-row">
@@ -415,8 +606,13 @@ GM_addStyle(`
         overlay.innerHTML = `
             <div class="aisbc-settings-card">
                 <h2>⚙ Nobrain SBC 设置</h2>
-                ${toggleRows}
-                ${numberRows}
+                <h3>算法设置 / Algorithm</h3>
+                ${makeNumberRows(ALGO_NUMBERS)}
+                <h3>排除选项 / Exclude</h3>
+                ${makeToggleRows(EXCLUDE_TOGGLES)}
+                <div id="aisbc-exclude-players-anchor"></div>
+                <h3>界面设置 / UI</h3>
+                ${makeToggleRows(UI_TOGGLES)}
                 ${textRows}
                 <div class="aisbc-settings-footer">
                     <button class="btn-standard mini" id="aisbc-settings-save"><span class="button__text">保存</span></button>
@@ -445,6 +641,20 @@ GM_addStyle(`
         });
 
         document.body.appendChild(overlay);
+
+        // 排除球员多选，插入排除选项块 / Exclude players multiselect
+        fetchPlayers().then(players => {
+            if (!document.contains(overlay)) return;
+            const anchor = overlay.querySelector("#aisbc-exclude-players-anchor");
+            createChoice(anchor, "排除 - 球员 / EXCLUDE - Players", "excludePlayers",
+                players.map(item => ({
+                    label: (item._staticData.firstName + " " + item._staticData.lastName).trim() || item._staticData.lastName,
+                    value: item.definitionId,
+                    id: item.definitionId,
+                    customProperties: { icon: `<img width="24" src='${getShellUri(item.rareflag, item.rareflag < 4 ? item.getTier() : ItemRatingTier.NONE)}'/>` },
+                }))
+            );
+        });
     };
 
     // ─── 固定/锁定球员 / Fixed / Locked Items ────────────────────────────────────
@@ -458,6 +668,21 @@ GM_addStyle(`
     const getLockedItems = () => {
         try { return getSharedSettings("excludePlayers") || []; }
         catch (e) { return []; }
+    };
+
+    const saveLockedItems = () => {
+        saveOwnSettings({ excludePlayers: getLockedItems() });
+    };
+    const lockItem = (item) => {
+        const lockedItems = getLockedItems();
+        lockedItems.push(item.definitionId);
+        saveOwnSettings({ excludePlayers: lockedItems });
+    };
+    const unlockItem = (item) => {
+        const lockedItems = getLockedItems();
+        const index = lockedItems.indexOf(item.definitionId);
+        if (index > -1) lockedItems.splice(index, 1);
+        saveOwnSettings({ excludePlayers: lockedItems });
     };
 
     const isItemFixed = (item) => getFixedItems().includes(item.id);
@@ -1018,7 +1243,7 @@ GM_addStyle(`
     UTSquadPitchView.prototype.setSlots = function (...args) {
         const result = _origSetSlots.call(this, ...args);
         const showPrices = getSharedSettings("showPrices") ?? SETTINGS_DEFAULTS.showPrices;
-        if (!isAiSBCRunning() && showPrices) {
+        if (showPrices) {
             const slots = this.getSlotViews();
             const squadSlots = [];
             slots.forEach((slot, index) => {
@@ -1460,10 +1685,10 @@ GM_addStyle(`
         offlineBtn.style.flex = "1";
         offlineBtn.classList.add("mini");
 
-        // 仅ai-sbc脚本未运行时显示设置齿轮按钮 / Settings gear button (only when ai-sbc script is not running)
-        const settingsBtn = !isAiSBCRunning() ? createButton("idOfflineSbcSettings", "⚙", () => {
+        // 设置齿轮按钮 / Settings gear button
+        const settingsBtn = createButton("idOfflineSbcSettings", "⚙", () => {
             showSettingsPanel();
-        }, "btn-standard") : null;
+        }, "btn-standard");
         if (settingsBtn) {
             settingsBtn.classList.add("mini");
             settingsBtn.style.flexShrink = "0";
@@ -1494,6 +1719,118 @@ GM_addStyle(`
         }
 
         return response;
+    };
+
+    // ─── 球员列表价格显示 / Player List Price Display ────────────────────────────
+    const isFodder = (item) => {
+        if (!cachedPriceItems) return false;
+        if (cachedPriceItems[item.definitionId]?.isExtinct || cachedPriceItems[item.definitionId]?.isObjective) return false;
+        const price = cachedPriceItems[item.definitionId]?.price;
+        if (!price) return false;
+        const fodderPrice = Math.max(
+            cachedPriceItems[item.rating + "_CBR"]?.price || 0,
+            item?._itemPriceLimits?.minimum || 0
+        );
+        return price <= fodderPrice * 1.1;
+    };
+
+    const getPriceDiv = (item) => {
+        if (!getSharedSettings("showPrices") || !item.definitionId || !cachedPriceItems) return null;
+        const entry = cachedPriceItems[item.definitionId];
+        if (!entry || !entry.price) return null;
+        const price = entry.price;
+        const el = document.createElement("div");
+        el.className = "aisbc-price-label";
+        if (isFodder(item)) el.style.color = "#00a651";
+        const cbrPrice = cachedPriceItems[item.rating + "_CBR"]?.price || 0;
+        if (cbrPrice > 0 && price >= cbrPrice * 2) {
+            el.classList.add("precious");
+        }
+        el.textContent = entry.isExtinct ? "绝版" : entry.isObjective ? "" : price.toLocaleString();
+        return el;
+    };
+
+    const UTPlayerItemView_renderItem = UTPlayerItemView.prototype.renderItem;
+    UTPlayerItemView.prototype.renderItem = function (item, t) {
+        const result = UTPlayerItemView_renderItem.call(this, item, t);
+        const el = getPriceDiv(item);
+        if (this.__root && el) this.__root.prepend(el);
+        if (this.__root) {
+            this.__root.classList.toggle("locked", isItemLocked(item));
+        }
+        return result;
+    };
+
+    // ─── 球员卡片 Lock/Unlock 按钮注入 / Player Card Lock/Unlock Button Injection ─
+    const lockedLabel = "SBC 解锁";
+    const unlockedLabel = "SBC 锁定";
+
+    const insertAfter = (newNode, existingNode) => {
+        const getRoot = el => el.getRootElement ? el.getRootElement() : el;
+        const ref = getRoot(existingNode);
+        ref.parentNode.insertBefore(getRoot(newNode), ref.nextSibling);
+    };
+
+    const UTDefaultSetItem = UTSlotActionPanelView.prototype.setItem;
+    UTSlotActionPanelView.prototype.setItem = function (e, t) {
+        const result = UTDefaultSetItem.call(this, e, t);
+        if (e.loans > -1 || !e.isPlayer() || !e.id || e.isTimeLimited()) return result;
+        if (!e?.duplicateId > 0 && !isItemFixed(e) && !this.lockUnlockButton) {
+            const label = isItemLocked(e) ? lockedLabel : unlockedLabel;
+            const button = new UTGroupButtonControl();
+            button.init();
+            insertAfter(button, this._btnDiscard);
+            button.setInteractionState(true);
+            button.setText(label);
+            button.addTarget(this, async () => {
+                if (isItemLocked(e)) {
+                    unlockItem(e);
+                    button.setText(unlockedLabel);
+                    showNotification("已解除 SBC 锁定", UINotificationType.POSITIVE);
+                } else {
+                    lockItem(e);
+                    button.setText(lockedLabel);
+                    showNotification("已设置 SBC 锁定", UINotificationType.POSITIVE);
+                }
+                getControllerInstance().applyDataChange();
+                cntlr.right()?.renderView();
+            }, EventType.TAP);
+            this.lockUnlockButton = button;
+        }
+        return result;
+    };
+
+    const UTDefaultAction = UTDefaultActionPanelView.prototype.render;
+    UTDefaultActionPanelView.prototype.render = function (e, t, i, o, n, r, s) {
+        const result = UTDefaultAction.call(this, e, t, i, o, n, r, s);
+        if (e.loans > -1 || !e.isPlayer() || !e.id || e.isTimeLimited()) return result;
+        if (!e?.duplicateId > 0 && !isItemFixed(e) && !this.lockUnlockButton) {
+            const label = isItemLocked(e) ? lockedLabel : unlockedLabel;
+            const button = new UTGroupButtonControl();
+            button.init();
+            insertAfter(button, this._discardButton);
+            button.setInteractionState(true);
+            button.setText(label);
+            button.addTarget(this, async () => {
+                if (isItemLocked(e)) {
+                    unlockItem(e);
+                    button.setText(unlockedLabel);
+                    showNotification("已解除 SBC 锁定", UINotificationType.POSITIVE);
+                } else {
+                    lockItem(e);
+                    button.setText(lockedLabel);
+                    showNotification("已设置 SBC 锁定", UINotificationType.POSITIVE);
+                }
+                try {
+                    cntlr.left()?.renderView();
+                    cntlr.right()?.renderView();
+                } catch (err) {
+                    cntlr.left()?.refreshList();
+                }
+            }, EventType.TAP);
+            this.lockUnlockButton = button;
+        }
+        return result;
     };
 
 })();
