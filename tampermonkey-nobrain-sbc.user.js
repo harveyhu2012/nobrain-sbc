@@ -207,14 +207,14 @@ GM_addStyle(`
             request.onupgradeneeded = (event) => {
                 const db = event.target.result;
                 if (!db.objectStoreNames.contains("priceItems")) {
-                    db.createObjectStore("priceItems");
+                    db.createObjectStore("priceItems", { keyPath: "id" });
                 }
             };
             request.onsuccess = (event) => {
                 const db = event.target.result;
                 const tx = db.transaction(["priceItems"], "readwrite");
                 const store = tx.objectStore("priceItems");
-                store.put({ data: cachedPriceItems }, "allPriceItems");
+                store.put({ id: "allPriceItems", data: cachedPriceItems });
                 tx.oncomplete = () => resolve();
                 tx.onerror = () => resolve();
             };
@@ -345,6 +345,7 @@ GM_addStyle(`
         showPrices: true,
         duplicateDiscount: 50,
         untradeableDiscount: 80,
+        nobrainConceptPremium: 200,
         apiProxy: "https://www.fut.gg/api/fut/",
     };
 
@@ -385,8 +386,9 @@ GM_addStyle(`
             ["showPrices", "显示球员价格"],
         ];
         const NUMBERS = [
-            ["duplicateDiscount", "重复球员折扣 (%)"],
-            ["untradeableDiscount", "不可交易折扣 (%)"],
+            ["duplicateDiscount", "重复球员折扣 (%)", 0, 100],
+            ["untradeableDiscount", "不可交易折扣 (%)", 0, 100],
+            ["nobrainConceptPremium", "虚拟球员价格倍率 (%)", 100, 1000],
         ];
         const TEXTS = [
             ["apiProxy", "API 代理地址"],
@@ -398,10 +400,10 @@ GM_addStyle(`
                 <input type="checkbox" id="aisbc-${key}" ${current[key] ? "checked" : ""}>
             </div>`).join("");
 
-        const numberRows = NUMBERS.map(([key, label]) => `
+        const numberRows = NUMBERS.map(([key, label, min = 0, max = 100]) => `
             <div class="aisbc-settings-row">
                 <label>${label}</label>
-                <input type="number" id="aisbc-${key}" value="${current[key]}" min="0" max="100">
+                <input type="number" id="aisbc-${key}" value="${current[key]}" min="${min}" max="${max}">
             </div>`).join("");
 
         const textRows = TEXTS.map(([key, label]) => `
@@ -963,7 +965,9 @@ GM_addStyle(`
                 const usedDbIds = new Set(bestSquad.filter((p, i) => p && i !== slot).map(p => p.databaseId));
 
                 for (const candidate of available) {
-                    if ((candidate.price || 15000000) >= currentPrice) break;
+                    if ((candidate.price || 15000000) >= currentPrice) {
+                        break;
+                    }
                     if (usedDbIds.has(candidate.databaseId)) {
                         continue;
                     }
@@ -1115,11 +1119,9 @@ GM_addStyle(`
 
             // 异步加载价格缓存 / Load price cache async
             await loadPriceItems();
-            // ai-sbc脚本未运行时从转会市场抓取价格 / Fetch prices from transfer market if ai-sbc script is not running
-            if (!isAiSBCRunning() && Object.keys(cachedPriceItems).length < 10) {
-                updateProgress("获取球员价格...");
-                await fetchAndCachePrices(rawPlayers, updateProgress);
-            }
+            // 抓取缺失或过期的球员价格 / Fetch missing or stale player prices
+            updateProgress("获取球员价格...");
+            await fetchAndCachePrices(rawPlayers, updateProgress);
             // 补全缺失的CBR条目（ai-sbc脚本未覆盖45以下评分）/ Fill missing CBR entries (ratings < 45 not covered by ai-sbc script)
             for (let i = 1; i <= 81; i++) {
                 if (!cachedPriceItems[i + "_CBR"] || !cachedPriceItems[i + "_CBR"].price) {
@@ -1146,6 +1148,7 @@ GM_addStyle(`
             const excludeLockedPlayers = getLockedItems();
             const duplicateDiscount   = getSharedSettings("duplicateDiscount")   ?? 50;
             const untradeableDiscount = getSharedSettings("untradeableDiscount") ?? 80;
+            const conceptPremium      = getSharedSettings("nobrainConceptPremium") ?? 200;
 
             // 映射为求解器格式，过滤租借/限时/设置排除的球员 / Map to solver format, filtering loans/timelimited/settings
             const players = rawPlayers
@@ -1206,6 +1209,48 @@ GM_addStyle(`
             const ratingTarget = ratingReq ? ratingReq.eligibilityValues[0] : 0;
             const maxFloorDrop = ratingTarget >= 84 ? 4 : (ratingTarget > 0 ? 99 : 0);
 
+            // 无条件注入当前阵容中的虚拟球员到可用库（价格 × conceptPremium%），使求解器能用真实球员替换
+            // Unconditionally inject concept players from current squad into pool (price × conceptPremium%) so solver can replace them with real players
+            {
+                const conceptsInSquad = _challenge.squad._players.slice(0, 11)
+                    .map(m => m._item)
+                    .filter(item => item?.concept);
+                if (conceptsInSquad.length > 0) {
+                    const existingDefIds = new Set(players.map(p => p.definitionId));
+                    conceptsInSquad.forEach(item => {
+                        if (existingDefIds.has(item.definitionId)) return;
+                        item.profile = chemUtil.getChemProfileForPlayer(item);
+                        item.normalizeClubId = chemUtil.normalizeClubId(item.teamId);
+                        const rawPrice = cachedPriceItems[item.definitionId]?.price || 0;
+                        const cbrPrice = cachedPriceItems[item.rating + "_CBR"]?.price || 100;
+                        let price = Math.max(rawPrice, cbrPrice, 100);
+                        price = Math.max(Math.round(price * conceptPremium / 100), 100);
+                        players.push({
+                            id: item.id,
+                            definitionId: item.definitionId,
+                            databaseId: item.databaseId || item.definitionId,
+                            name: item._staticData?.name || String(item.definitionId),
+                            rating: item.rating,
+                            teamId: item.teamId,
+                            leagueId: item.leagueId,
+                            nationId: item.nationId,
+                            rarityId: item.rareflag,
+                            ratingTier: item.getTier ? item.getTier() : 0,
+                            possiblePositions: item.possiblePositions || [],
+                            groups: item.groups || [],
+                            isFixed: false,
+                            isStorage: false,
+                            concept: true,
+                            price,
+                            maxChem: item.profile?.maxChem || 0,
+                            normalizeClubId: item.normalizeClubId,
+                        });
+                        existingDefIds.add(item.definitionId);
+                    });
+                }
+            }
+
+
             let bestResult = { feasible: false, cost: Infinity };
             let bestCappedPlayers = players;
 
@@ -1215,7 +1260,6 @@ GM_addStyle(`
             if (checkConstraints(currentSquad, sbcData.formation, sbcData.constraints)) {
                 bestResult = { feasible: true, cost: squadCost(currentSquad), squad: currentSquad, lsId: 0 };
                 bestCappedPlayers = players;
-                console.log(`[offline] current squad is feasible, skipping search, cost=${bestResult.cost}`);
             }
 
             // 寻找能产生可行解的最小评分窗口 / Find the minimum window that yields a feasible solution
@@ -1256,9 +1300,15 @@ GM_addStyle(`
                     const squad2 = greedySolve(cappedPlayers2, sbcData);
                     const result2 = await localSearch(squad2, cappedPlayers2, sbcData, undefined, lsProgressCb);
                     if (result2.feasible && result2.cost < bestResult.cost) { bestCappedPlayers = cappedPlayers2; bestResult = result2; }
+                    // 找到可行解后，扩展球员池到完整范围，让低分球员参与降费优化
+                    // After finding feasible solution, expand pool to full range so cheap low-rated players can reduce cost
+                    if (bestResult.feasible && ratingTarget > 0) {
+                        // 找到可行解后去掉评分限制，ILS阶段用全部球员降费
+                        // After feasible solution found, remove rating window for ILS cost optimization
+                        bestCappedPlayers = players;
+                    }
                     const logSquad = (label, r) => {
                         const { totalChem } = calcChemistry(r.squad, sbcData.formation);
-                        console.log(`[${label}] cost=${r.cost} chem=${totalChem}`, r.squad.map(p => p ? `${p.name}(${p.rating})` : 'null'));
                     };
                     logSquad('best after expand', bestResult);
                     break;
@@ -1271,8 +1321,10 @@ GM_addStyle(`
                 return;
             }
 
-            // 迭代局部搜索：连续15轮无改善则停止 / Iterated Local Search: stop after 15 consecutive rounds with no improvement
-            const ILS_NO_IMPROVE_LIMIT = 15;
+            // 迭代局部搜索：连续N轮无改善则停止；有假想球员时加倍以确保高价假想球员被替换
+            // Iterated Local Search: stop after N rounds with no improvement; double limit when concept players present to ensure expensive ones get replaced
+            const hasConceptInPool = players.some(p => p.concept);
+            const ILS_NO_IMPROVE_LIMIT = hasConceptInPool ? 30 : 15;
             let ilsNoImprove = 0;
             let ilsIter = 0;
             const { formation: f0, brickIndices: bi0 } = sbcData;
@@ -1297,7 +1349,6 @@ GM_addStyle(`
                 if (result.feasible && result.cost < bestResult.cost) {
                     bestResult = result;
                     const { totalChem } = calcChemistry(bestResult.squad, sbcData.formation);
-                    console.log(`[ILS ${ilsIter}] improved cost=${bestResult.cost} chem=${totalChem}`, bestResult.squad.map(p => p ? `${p.name}(${p.rating})` : 'null'));
                     ilsNoImprove = 0;
                 } else {
                     ilsNoImprove++;
@@ -1328,9 +1379,11 @@ GM_addStyle(`
                     const slotPos = formation[worstSlot];
                     const usedDbIds = new Set(current.filter((p, i) => p && i !== worstSlot).map(p => p.databaseId));
                     let replaced = false;
+                    const currentSlotPrice = current[worstSlot]?.price || 15000000;
                     for (const candidate of downgradPool) {
                         if (candidate.rating >= worstRating) break;
                         if (usedDbIds.has(candidate.databaseId)) continue;
+                        if ((candidate.price || 15000000) >= currentSlotPrice) continue;
                         const newSquad = [...current];
                         newSquad[worstSlot] = candidate;
                         if (checkConstraints(newSquad, formation, constraints)) {
@@ -1350,7 +1403,6 @@ GM_addStyle(`
             }
 
             // 构建saveSquad所需的球员列表 / Build solution player list for saveSquad
-            console.log(`[final] selected localSearch #${bestResult.lsId} cost=${bestResult.cost}`);
             const _squad = cntlr.current()?._squad || cntlr.current()?._challenge?.squad;
             if (!_squad) {
                 hideLoader();
@@ -1366,12 +1418,20 @@ GM_addStyle(`
                 if (match) {
                     solutionPlayers[idx] = match;
                 } else {
-                    const conceptPlayer = new UTItemEntity();
-                    conceptPlayer.definitionId = p.definitionId;
-                    conceptPlayer.stackCount = 1;
-                    conceptPlayer.id = p.definitionId;
-                    conceptPlayer.concept = true;
-                    solutionPlayers[idx] = conceptPlayer;
+                    // 尝试从当前阵容取原始 item（注入的 concept 球员）/ Try to reuse original item from current squad (injected concept player)
+                    const squadItem = _challenge.squad._players
+                        .map(m => m._item)
+                        .find(item => item?.id === p.id);
+                    if (squadItem) {
+                        solutionPlayers[idx] = squadItem;
+                    } else {
+                        const conceptPlayer = new UTItemEntity();
+                        conceptPlayer.definitionId = p.definitionId;
+                        conceptPlayer.stackCount = 1;
+                        conceptPlayer.id = p.definitionId;
+                        conceptPlayer.concept = true;
+                        solutionPlayers[idx] = conceptPlayer;
+                    }
                 }
             });
 
