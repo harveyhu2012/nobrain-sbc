@@ -9,7 +9,7 @@
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
 // @connect      fut.gg
-// @connect      futgg-e6y.pages.dev
+// @connect      pages.dev
 // @connect      enhancer-api.futnext.com
 // ==/UserScript==
 
@@ -180,7 +180,7 @@ GM_addStyle(`
         "param.innerRestarts":          ["内部重启次数", "Inner Restarts"],
         "param.ilsNoImproveLimit":      ["ILS无改善上限", "ILS No-Improve Limit"],
         "param.showPrices":             ["显示球员价格", "Show Player Prices"],
-        "param.apiProxy":               ["API 代理地址", "API Proxy URL"],
+        "param.apiProxy":               ["自定义 API 代理（留空使用内置随机代理）", "Custom API Proxy (leave blank for built-in)"],
         "param.excludePlayers":         ["排除 - 球员", "EXCLUDE - Players"],
         // 按钮 / Buttons
         "btn.solve":                    ["求解SBC", "Solve SBC"],
@@ -422,16 +422,42 @@ GM_addStyle(`
                     });
                 } else {
                     const params = batch.join("%2C");
-                    const apiProxy = getOwnSettings().apiProxy ?? SETTINGS_DEFAULTS.apiProxy;
-                    const baseUrl = apiProxy ? `${apiProxy}?futggapi=` : "https://www.fut.gg/api/fut/";
-                    const json = JSON.parse(await externalRequest("GET", `${baseUrl}player-prices/26/?ids=${params}`));
-                    if (json.data && Array.isArray(json.data)) {
-                        json.data.forEach((item, index) => { priceResponse[index] = item; });
+                    const proxy = getApiProxy();
+                    let json;
+                    if (proxy) {
+                        try {
+                            json = JSON.parse(await externalRequest("GET", `${proxy}?futggapi=player-prices/26/?ids=${params}`));
+                        } catch (e) {
+                            markProxyDead(proxy);
+                            json = null;
+                        }
+                        if (!json?.data) {
+                            markProxyDead(proxy);
+                            json = null;
+                        }
                     }
-                    for (let key in priceResponse) {
-                        const matchingPlayer = players.find(p => p.definitionId == priceResponse[key]["eaId"]);
-                        priceResponse[key].rating = matchingPlayer?.rating || 0;
-                        priceResponse[key].name = matchingPlayer?._staticData?.name || "";
+                    if (!json) {
+                        // 降级到 futnext / Fallback to futnext
+                        console.log("[NoBrainSBC] 代理不可用，降级到 futnext / Proxy unavailable, falling back to futnext");
+                        const futnextParams = batch.join("_");
+                        const futnextJson = JSON.parse(await externalRequest("GET", `https://enhancer-api.futnext.com/players/prices?ids=${futnextParams}&platform=ps`));
+                        const priceMap = new Map();
+                        futnextJson.forEach(item => { if (item.prices?.length) priceMap.set(item.definitionId, item.prices[0]); });
+                        batch.forEach((definitionId, index) => {
+                            const player = players.find(p => p.definitionId === definitionId);
+                            if (!player) return;
+                            const price = priceMap.get(definitionId);
+                            priceResponse[index] = { eaId: definitionId, price: price || null, rating: player.rating || 0, name: player._staticData?.name || "", isExtinct: !price, lastChecked: Date.now() };
+                        });
+                    } else {
+                        if (json.data && Array.isArray(json.data)) {
+                            json.data.forEach((item, index) => { priceResponse[index] = item; });
+                        }
+                        for (let key in priceResponse) {
+                            const matchingPlayer = players.find(p => p.definitionId == priceResponse[key]["eaId"]);
+                            priceResponse[key].rating = matchingPlayer?.rating || 0;
+                            priceResponse[key].name = matchingPlayer?._staticData?.name || "";
+                        }
                     }
                 }
                 PriceItem(priceResponse);
@@ -584,6 +610,28 @@ GM_addStyle(`
         renderTags();
     };
 
+    // ─── 内置 API 代理列表 / Built-in API Proxy List ─────────────────────────────
+    const BUILTIN_PROXIES = [
+        "https://futgg10.pages.dev",
+        "https://futgg20.pages.dev",
+        "https://futgg30.pages.dev",
+        "https://futgg40.pages.dev",
+        "https://futgg50.pages.dev",
+    ];
+    const _deadProxies = new Set();
+
+    const getApiProxy = () => {
+        const custom = getOwnSettings().apiProxy?.trim();
+        if (custom) return custom;
+        const alive = BUILTIN_PROXIES.filter(p => !_deadProxies.has(p));
+        if (!alive.length) return null; // 全部不可用，降级到 futnext
+        return alive[Math.floor(Math.random() * alive.length)];
+    };
+
+    const markProxyDead = (proxy) => {
+        if (proxy) _deadProxies.add(proxy);
+    };
+
     // ─── 设置面板 / Settings Panel ────────────────────────────────────────────────
     const SETTINGS_DEFAULTS = {
         excludeSbc: false,
@@ -598,7 +646,7 @@ GM_addStyle(`
         hillClimbMaxIter: 5000,
         innerRestarts: 6,
         ilsNoImproveLimit: 15,
-        apiProxy: "https://www.fut.gg/api/fut/",
+        apiProxy: "",
     };
 
     const getOwnSettings = () => {
@@ -671,7 +719,7 @@ GM_addStyle(`
         const textRows = TEXTS.map(([key, label]) => `
             <div class="aisbc-settings-row">
                 <label>${label}</label>
-                <input type="text" id="aisbc-${key}" value="${current[key] || ""}" style="width:200px;font-size:11px;">
+                <input type="text" id="aisbc-${key}" value="${current[key] || ""}" placeholder="${BUILTIN_PROXIES[0]}" style="width:200px;font-size:11px;">
             </div>`).join("");
 
         overlay.innerHTML = `
