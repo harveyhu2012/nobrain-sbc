@@ -88,6 +88,7 @@ GM_addStyle(`
         font-size: 13px;
     }
     .aisbc-settings-row label { flex: 1; }
+    .aisbc-settings-row .choicesLabel { font-size: 13px; }
     .aisbc-settings-row input[type=number] {
         width: 70px;
         background: var(--ut-color-background-secondary, #2a2a3e);
@@ -145,6 +146,70 @@ GM_addStyle(`
 
 (function () {
     "use strict";
+
+    // ─── i18n 本地化 / i18n Localization ─────────────────────────────────────────
+    let aisbcLang = 0; // 0=中文, 1=English
+    let _langDetected = false;
+    const detectLang = () => {
+        if (_langDetected) return;
+        _langDetected = true;
+        try {
+            const locale = services.Localization.locale;
+            if (locale.language !== "zh") aisbcLang = 1;
+        } catch (e) { /* 默认中文 / default Chinese */ }
+    };
+    const aisbcLocale = {
+        // 设置面板 / Settings panel
+        "settings.title":               ["⚙ Nobrain SBC 设置", "⚙ Nobrain SBC Settings"],
+        "settings.algo":                ["算法设置", "Algorithm"],
+        "settings.exclude":             ["排除选项", "Exclude"],
+        "settings.ui":                  ["界面设置", "UI"],
+        "settings.save":                ["保存", "Save"],
+        "settings.close":               ["关闭", "Close"],
+        "settings.saved":               ["设置已保存", "Settings saved"],
+        // 设置项标签 / Setting labels
+        "param.excludeSbc":             ["排除 SBC 球员", "Exclude SBC Players"],
+        "param.excludeObjective":       ["排除目标球员", "Exclude Objective Players"],
+        "param.excludeSpecial":         ["排除特殊球员", "Exclude Special Players"],
+        "param.excludeTradable":        ["排除可交易球员", "Exclude Tradable Players"],
+        "param.excludeExtinct":         ["排除绝版球员", "Exclude Extinct Players"],
+        "param.duplicateDiscount":      ["重复球员折扣 (%)", "Duplicate Discount (%)"],
+        "param.untradeableDiscount":    ["不可交易折扣 (%)", "Untradeable Discount (%)"],
+        "param.conceptPremium":         ["虚拟球员价格倍率 (%)", "Concept Player Price Premium (%)"],
+        "param.hillClimbMaxIter":       ["爬山迭代次数", "Hill Climb Iterations"],
+        "param.innerRestarts":          ["内部重启次数", "Inner Restarts"],
+        "param.ilsNoImproveLimit":      ["ILS无改善上限", "ILS No-Improve Limit"],
+        "param.showPrices":             ["显示球员价格", "Show Player Prices"],
+        "param.apiProxy":               ["API 代理地址", "API Proxy URL"],
+        "param.excludePlayers":         ["排除 - 球员", "EXCLUDE - Players"],
+        // 按钮 / Buttons
+        "btn.solve":                    ["求解SBC", "Solve SBC"],
+        "btn.sbcLock":                  ["SBC 锁定", "SBC Lock"],
+        "btn.sbcUnlock":                ["SBC 解锁", "SBC Unlock"],
+        // 通知 / Notifications
+        "notify.solving":               ["开始求解...", "Solving..."],
+        "notify.noPlayers":             ["俱乐部中未找到球员", "No players found in club"],
+        "notify.saveFailed":            ["保存阵容失败", "Failed to save squad"],
+        "notify.solved":                ["求解完成！", "Solved!"],
+        "notify.noSquad":               ["无法获取阵容引用", "Cannot get squad reference"],
+        "notify.noChallenge":           ["未找到挑战赛", "Challenge not found"],
+        "notify.error":                 ["求解出错：%1", "Solve error: %1"],
+        "notify.locked":                ["已设置 SBC 锁定", "SBC Lock set"],
+        "notify.unlocked":              ["已解除 SBC 锁定", "SBC Lock removed"],
+        // 进度 / Progress
+        "progress.pct":                 ["求解进度：%1%", "Solving: %1%"],
+        // 价格 / Price
+        "price.extinct":                ["绝版", "EXTINCT"],
+        // 多选 / Multiselect
+        "ms.search":                    ["搜索... / Search...", "Search..."],
+        "ms.placeholder":               ["点击选择... / Click to select...", "Click to select..."],
+        "ms.empty":                     ["无结果 / No results", "No results"],
+    };
+    const L = (key, ...params) => {
+        let text = aisbcLocale.hasOwnProperty(key) ? aisbcLocale[key][aisbcLang] : key;
+        params.forEach((val, i) => { text = text.replace(`%${i + 1}`, String(val)); });
+        return text;
+    };
 
     // ─── 常量 / Constants ─────────────────────────────────────────────────────────
     const DEFAULT_SEARCH_BATCH_SIZE = 91;
@@ -416,7 +481,7 @@ GM_addStyle(`
         const searchInput = document.createElement("input");
         searchInput.className = "ms-search";
         searchInput.type = "text";
-        searchInput.placeholder = "搜索... / Search...";
+        searchInput.placeholder = L("ms.search");
         const listEl = document.createElement("div");
         dd.appendChild(searchInput);
         dd.appendChild(listEl);
@@ -431,7 +496,7 @@ GM_addStyle(`
         const renderTags = () => {
             tagsEl.innerHTML = "";
             if (selected.size === 0) {
-                tagsEl.innerHTML = `<span style="opacity:.5;font-size:13px">点击选择... / Click to select...</span>`;
+                tagsEl.innerHTML = `<span style="opacity:.5;font-size:13px">${L("ms.placeholder")}</span>`;
                 return;
             }
             const rendered = new Set();
@@ -485,7 +550,7 @@ GM_addStyle(`
                 listEl.appendChild(el);
             });
             if (count === 0) {
-                listEl.innerHTML = `<div class="ms-empty">无结果 / No results</div>`;
+                listEl.innerHTML = `<div class="ms-empty">${L("ms.empty")}</div>`;
             }
         };
 
@@ -565,25 +630,25 @@ GM_addStyle(`
         overlay.className = "aisbc-settings-overlay";
 
         const EXCLUDE_TOGGLES = [
-            ["excludeSbc", "排除 SBC 球员"],
-            ["excludeObjective", "排除目标球员"],
-            ["excludeSpecial", "排除特殊球员"],
-            ["excludeTradable", "排除可交易球员"],
-            ["excludeExtinct", "排除绝版球员"],
+            ["excludeSbc", L("param.excludeSbc")],
+            ["excludeObjective", L("param.excludeObjective")],
+            ["excludeSpecial", L("param.excludeSpecial")],
+            ["excludeTradable", L("param.excludeTradable")],
+            ["excludeExtinct", L("param.excludeExtinct")],
         ];
         const ALGO_NUMBERS = [
-            ["duplicateDiscount", "重复球员折扣 (%)", 0, 100],
-            ["untradeableDiscount", "不可交易折扣 (%)", 0, 100],
-            ["nobrainConceptPremium", "虚拟球员价格倍率 (%)", 100, 1000],
-            ["hillClimbMaxIter", "爬山迭代次数", 100, 50000],
-            ["innerRestarts", "内部重启次数", 1, 20],
-            ["ilsNoImproveLimit", "ILS无改善上限", 1, 100],
+            ["duplicateDiscount", L("param.duplicateDiscount"), 0, 100],
+            ["untradeableDiscount", L("param.untradeableDiscount"), 0, 100],
+            ["nobrainConceptPremium", L("param.conceptPremium"), 100, 1000],
+            ["hillClimbMaxIter", L("param.hillClimbMaxIter"), 100, 50000],
+            ["innerRestarts", L("param.innerRestarts"), 1, 20],
+            ["ilsNoImproveLimit", L("param.ilsNoImproveLimit"), 1, 100],
         ];
         const UI_TOGGLES = [
-            ["showPrices", "显示球员价格"],
+            ["showPrices", L("param.showPrices")],
         ];
         const TEXTS = [
-            ["apiProxy", "API 代理地址"],
+            ["apiProxy", L("param.apiProxy")],
         ];
         const TOGGLES = [...EXCLUDE_TOGGLES, ...UI_TOGGLES];
         const NUMBERS = ALGO_NUMBERS;
@@ -611,18 +676,18 @@ GM_addStyle(`
 
         overlay.innerHTML = `
             <div class="aisbc-settings-card">
-                <h2>⚙ Nobrain SBC 设置</h2>
-                <h3>算法设置 / Algorithm</h3>
+                <h2>${L("settings.title")}</h2>
+                <h3>${L("settings.algo")}</h3>
                 ${makeNumberRows(ALGO_NUMBERS)}
-                <h3>排除选项 / Exclude</h3>
+                <h3>${L("settings.exclude")}</h3>
                 ${makeToggleRows(EXCLUDE_TOGGLES)}
                 <div id="aisbc-exclude-players-anchor"></div>
-                <h3>界面设置 / UI</h3>
+                <h3>${L("settings.ui")}</h3>
                 ${makeToggleRows(UI_TOGGLES)}
                 ${textRows}
                 <div class="aisbc-settings-footer">
-                    <button class="btn-standard mini" id="aisbc-settings-save"><span class="button__text">保存</span></button>
-                    <button class="btn-standard mini" id="aisbc-settings-close"><span class="button__text">关闭</span></button>
+                    <button class="btn-standard mini" id="aisbc-settings-save"><span class="button__text">${L("settings.save")}</span></button>
+                    <button class="btn-standard mini" id="aisbc-settings-close"><span class="button__text">${L("settings.close")}</span></button>
                 </div>
             </div>`;
 
@@ -643,7 +708,7 @@ GM_addStyle(`
             });
             saveOwnSettings(result);
             overlay.remove();
-            showNotification("设置已保存", UINotificationType.POSITIVE);
+            showNotification(L("settings.saved"), UINotificationType.POSITIVE);
         });
 
         document.body.appendChild(overlay);
@@ -652,7 +717,7 @@ GM_addStyle(`
         fetchPlayers().then(players => {
             if (!document.contains(overlay)) return;
             const anchor = overlay.querySelector("#aisbc-exclude-players-anchor");
-            createChoice(anchor, "排除 - 球员 / EXCLUDE - Players", "excludePlayers",
+            createChoice(anchor, L("param.excludePlayers"), "excludePlayers",
                 players.map(item => ({
                     label: (item._staticData.firstName + " " + item._staticData.lastName).trim() || item._staticData.lastName,
                     value: item.definitionId,
@@ -1247,6 +1312,25 @@ GM_addStyle(`
         });
     };
 
+    // ─── 初始化（等待 services 就绪）/ Initialization (wait for services) ─────────
+    const init = () => {
+        if (!services?.Localization) {
+            setTimeout(init, 2000);
+            return;
+        }
+
+        // 语言检测 / Language detection
+        try {
+            if (services.Localization.locale.language !== "zh") aisbcLang = 1;
+        } catch (e) { /* 默认中文 / default Chinese */ }
+
+        // 语言就绪后更新 lock/unlock 标签 / Update lock/unlock labels after language is ready
+        lockedLabel = L("btn.sbcUnlock");
+        unlockedLabel = L("btn.sbcLock");
+    };
+
+    init();
+
     const _origSetSlots = UTSquadPitchView.prototype.setSlots;
     UTSquadPitchView.prototype.setSlots = function (...args) {
         const result = _origSetSlots.call(this, ...args);
@@ -1274,7 +1358,7 @@ GM_addStyle(`
         await services.SBC.saveChallenge(_challenge).observe(this, async (z, d) => {
             if (!d.success) {
                 hideLoader();
-                showNotification("保存阵容失败", UINotificationType.NEGATIVE);
+                showNotification(L("notify.saveFailed"), UINotificationType.NEGATIVE);
                 return;
             }
             services.SBC.loadChallengeData(_challenge).observe(this, async (z2, data) => {
@@ -1284,7 +1368,7 @@ GM_addStyle(`
                     const ps = squad._players.map(p => p._item);
                     _challenge.squad.setPlayers(ps, true);
                     _challenge.onDataChange.notify({ squad });
-                    showNotification("求解完成！", UINotificationType.POSITIVE);
+                    showNotification(L("notify.solved"), UINotificationType.POSITIVE);
                     // 保存完成后返回阵容界面（与FSU行为一致）/ Navigate back after save completes, same as FSU
                     if (isPhone() && cntlr.current()?.className === "UTSBCSquadDetailPanelViewController") {
                         setTimeout(() => {
@@ -1306,7 +1390,7 @@ GM_addStyle(`
             const elapsed = ((Date.now() - solveStart) / 1000).toFixed(1);
             updateLoaderText(`${text} (${elapsed}s)`);
         };
-        showNotification("开始求解...", UINotificationType.POSITIVE);
+        showNotification(L("notify.solving"), UINotificationType.POSITIVE);
 
         try {
             // 从挑战赛构建sbcData / Build sbcData from challenge
@@ -1436,7 +1520,7 @@ GM_addStyle(`
 
             if (players.length === 0) {
                 hideLoader();
-                showNotification("俱乐部中未找到球员", UINotificationType.NEGATIVE);
+                showNotification(L("notify.noPlayers"), UINotificationType.NEGATIVE);
                 return;
             }
 
@@ -1520,7 +1604,7 @@ GM_addStyle(`
                     const m = t.match(/restart (\d+)\/(\d+), iter (\d+)\/(\d+)/);
                     if (m) {
                         const pct = (((parseInt(m[1])-1)*parseInt(m[4]) + parseInt(m[3])) / (parseInt(m[2])*parseInt(m[4])) * 100).toFixed(1);
-                        updateProgress(`求解进度：${pct}%`);
+                        updateProgress(L("progress.pct", pct));
                     } else {
                         updateProgress(t);
                     }
@@ -1642,7 +1726,7 @@ GM_addStyle(`
             const _squad = cntlr.current()?._squad || cntlr.current()?._challenge?.squad;
             if (!_squad) {
                 hideLoader();
-                showNotification("无法获取阵容引用", UINotificationType.NEGATIVE);
+                showNotification(L("notify.noSquad"), UINotificationType.NEGATIVE);
                 return;
             }
 
@@ -1675,7 +1759,7 @@ GM_addStyle(`
 
         } catch (e) {
             hideLoader();
-            showNotification("求解出错：" + e.message, UINotificationType.NEGATIVE);
+            showNotification(L("notify.error", e.message), UINotificationType.NEGATIVE);
         }
     };
 
@@ -1684,10 +1768,10 @@ GM_addStyle(`
     UTSBCSquadDetailPanelView.prototype.init = function (...args) {
         const response = squadDetailPanelViewInit.call(this, ...args);
 
-        const offlineBtn = createButton("idOfflineSolveSbc", "求解SBC", async () => {
+        const offlineBtn = createButton("idOfflineSolveSbc", L("btn.solve"), async () => {
             const { _challenge } = cntlr.current();
             if (!_challenge) {
-                showNotification("未找到挑战赛", UINotificationType.NEGATIVE);
+                showNotification(L("notify.noChallenge"), UINotificationType.NEGATIVE);
                 return;
             }
             await nobrainSolveSBC(_challenge);
@@ -1775,7 +1859,7 @@ GM_addStyle(`
         if (isPrecious(item)) {
             el.classList.add("precious");
         }
-        el.textContent = entry.isExtinct ? "绝版" : entry.isObjective ? "" : price.toLocaleString();
+        el.textContent = entry.isExtinct ? L("price.extinct") : entry.isObjective ? "" : price.toLocaleString();
         return el;
     };
 
@@ -1795,8 +1879,8 @@ GM_addStyle(`
     };
 
     // ─── 球员卡片 Lock/Unlock 按钮注入 / Player Card Lock/Unlock Button Injection ─
-    const lockedLabel = "SBC 解锁";
-    const unlockedLabel = "SBC 锁定";
+    let lockedLabel = L("btn.sbcUnlock");
+    let unlockedLabel = L("btn.sbcLock");
 
     const insertAfter = (newNode, existingNode) => {
         const getRoot = el => el.getRootElement ? el.getRootElement() : el;
@@ -1819,11 +1903,11 @@ GM_addStyle(`
                 if (isItemLocked(e)) {
                     unlockItem(e);
                     button.setText(unlockedLabel);
-                    showNotification("已解除 SBC 锁定", UINotificationType.POSITIVE);
+                    showNotification(L("notify.unlocked"), UINotificationType.POSITIVE);
                 } else {
                     lockItem(e);
                     button.setText(lockedLabel);
-                    showNotification("已设置 SBC 锁定", UINotificationType.POSITIVE);
+                    showNotification(L("notify.locked"), UINotificationType.POSITIVE);
                 }
                 getControllerInstance().applyDataChange();
                 cntlr.right()?.renderView();
@@ -1848,11 +1932,11 @@ GM_addStyle(`
                 if (isItemLocked(e)) {
                     unlockItem(e);
                     button.setText(unlockedLabel);
-                    showNotification("已解除 SBC 锁定", UINotificationType.POSITIVE);
+                    showNotification(L("notify.unlocked"), UINotificationType.POSITIVE);
                 } else {
                     lockItem(e);
                     button.setText(lockedLabel);
-                    showNotification("已设置 SBC 锁定", UINotificationType.POSITIVE);
+                    showNotification(L("notify.locked"), UINotificationType.POSITIVE);
                 }
                 try {
                     cntlr.left()?.renderView();
