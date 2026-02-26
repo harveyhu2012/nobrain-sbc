@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.19
+// @version      0.20
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       Harvey Hu
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -30,15 +30,19 @@ GM_addStyle(`
     }
     .aisbc-price-label {
         position: absolute;
-        bottom: 2px;
-        right: 4px;
-        font-size: 10px;
+        font-size: 12px;
+        width: auto !important;
+        padding: 0 0.2rem;
+        left: 50%;
+        bottom: 5%;
+        transform: translateX(-50%) !important;
+        white-space: nowrap;
         color: #f5c518;
         background: rgba(0,0,0,0.55);
         padding: 0 3px;
         border-radius: 3px;
         pointer-events: none;
-        z-index: 10;
+        z-index: 2;
     }
     .aisbc-price-label.precious {
         background: #ee2208;
@@ -487,13 +491,15 @@ GM_addStyle(`
         if (idsArray.length === 0) return;
 
         const platform = getUserPlatform();
-        const BATCH_SIZE = 20;
+        const BATCH_SIZE = 50;
+        const CONCURRENT_REQUESTS = 4;
         const batches = [];
         const tempIds = [...idsArray];
         while (tempIds.length) batches.push(tempIds.splice(0, BATCH_SIZE));
 
         let done = 0;
-        for (const batch of batches) {
+
+        const processBatch = async (batch) => {
             try {
                 let priceResponse = {};
                 if (platform === "pc") {
@@ -538,12 +544,15 @@ GM_addStyle(`
                         });
                     } else {
                         if (json.data && Array.isArray(json.data)) {
-                            json.data.forEach((item, index) => { priceResponse[index] = item; });
-                        }
-                        for (let key in priceResponse) {
-                            const matchingPlayer = players.find(p => p.definitionId == priceResponse[key]["eaId"]);
-                            priceResponse[key].rating = matchingPlayer?.rating || 0;
-                            priceResponse[key].name = matchingPlayer?._staticData?.name || "";
+                            const priceMap = new Map();
+                            json.data.forEach(item => { if (item.eaId) priceMap.set(item.eaId, item); });
+                            batch.forEach((definitionId, index) => {
+                                const item = priceMap.get(definitionId);
+                                if (item) {
+                                    const matchingPlayer = players.find(p => p.definitionId == definitionId);
+                                    priceResponse[index] = { ...item, rating: matchingPlayer?.rating || 0, name: matchingPlayer?._staticData?.name || "" };
+                                }
+                            });
                         }
                     }
                 }
@@ -551,6 +560,23 @@ GM_addStyle(`
                 done += batch.length;
                 if (onProgress) onProgress(`获取价格 ${done}/${idsArray.length}...`);
             } catch (e) { /* skip failed batch */ }
+        };
+
+        // 并发执行，滚动窗口保持最多 CONCURRENT_REQUESTS 个同时进行
+        const activeRequests = new Set();
+        let batchIndex = 0;
+        const launchNext = () => {
+            while (activeRequests.size < CONCURRENT_REQUESTS && batchIndex < batches.length) {
+                const p = processBatch(batches[batchIndex++]).finally(() => {
+                    activeRequests.delete(p);
+                });
+                activeRequests.add(p);
+            }
+        };
+        launchNext();
+        while (activeRequests.size > 0) {
+            await Promise.race(activeRequests);
+            launchNext();
         }
     };
 
@@ -2097,6 +2123,7 @@ GM_addStyle(`
     // ─── 球员列表价格显示 / Player List Price Display ────────────────────────────
     const isFodder = (item) => {
         if (!cachedPriceItems) return false;
+        if (item.rating > 90) return false;
         if (cachedPriceItems[item.definitionId]?.isExtinct || cachedPriceItems[item.definitionId]?.isObjective) return false;
         const price = cachedPriceItems[item.definitionId]?.price;
         if (!price) return false;
@@ -2109,6 +2136,7 @@ GM_addStyle(`
 
     const isPrecious = (item) => {
         if (!cachedPriceItems) return false;
+        if (item.rareflag !== 0 && item.rareflag !== 1) return false;
         const price = cachedPriceItems[item.definitionId]?.price;
         if (!price) return false;
         const cbrPrice = cachedPriceItems[item.rating + "_CBR"]?.price || 0;
