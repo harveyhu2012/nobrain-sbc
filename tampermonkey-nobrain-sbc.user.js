@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.17
+// @version      0.18
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       Harvey Hu
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -211,20 +211,6 @@ GM_addStyle(`
 
     // ─── i18n 本地化 / i18n Localization ─────────────────────────────────────────
     let aisbcLang = 0; // 0=中文, 1=English
-    let _langDetected = false;
-    const detectLang = () => {
-        if (_langDetected) return;
-        _langDetected = true;
-        try {
-            const locale = services.Localization.locale;
-            const lang = locale.language;
-            const chosen = lang.startsWith("zh") ? "中文" : "English";
-            console.log(`[NoBrainSBC] detectLang: locale.language="${lang}" → ${chosen}`);
-            if (!lang.startsWith("zh")) aisbcLang = 1;
-        } catch (e) {
-            console.log("[NoBrainSBC] detectLang: services.Localization.locale 不可用，默认中文");
-        }
-    };
     const aisbcLocale = {
         // 设置面板 / Settings panel
         "settings.title":               ["⚙ Nobrain SBC 设置", "⚙ Nobrain SBC Settings"],
@@ -1493,9 +1479,8 @@ GM_addStyle(`
             try {
                 const lang = services.Localization.locale.language;
                 if (!lang.startsWith("zh")) aisbcLang = 1;
-                console.log(`[NoBrainSBC] detectLang: locale="${lang}" → ${aisbcLang === 0 ? "中文" : "English"}`);
             } catch (e) {
-                console.log("[NoBrainSBC] detectLang: locale不可用，默认中文");
+                // default to Chinese
             }
         }
         return result;
@@ -1627,11 +1612,11 @@ GM_addStyle(`
             });
 
             // 读取共享设置 / Read shared settings
-            const excludeSbc        = getSharedSettings("excludeSbc")        || false;
-            const excludeObjective  = getSharedSettings("excludeObjective")  || false;
-            const excludeSpecial    = getSharedSettings("excludeSpecial")    || false;
-            const excludeTradable   = getSharedSettings("excludeTradable")   || false;
-            const excludeExtinct    = getSharedSettings("excludeExtinct")    || false;
+            const excludeSbc        = getOwnSettings().excludeSbc        ?? SETTINGS_DEFAULTS.excludeSbc;
+            const excludeObjective  = getOwnSettings().excludeObjective  ?? SETTINGS_DEFAULTS.excludeObjective;
+            const excludeSpecial    = getOwnSettings().excludeSpecial    ?? SETTINGS_DEFAULTS.excludeSpecial;
+            const excludeTradable   = getOwnSettings().excludeTradable   ?? SETTINGS_DEFAULTS.excludeTradable;
+            const excludeExtinct    = getOwnSettings().excludeExtinct    ?? SETTINGS_DEFAULTS.excludeExtinct;
             const excludeLockedPlayers = getLockedItems();
             const duplicateDiscount   = getSharedSettings("duplicateDiscount")   ?? 50;
             const untradeableDiscount = getSharedSettings("untradeableDiscount") ?? 80;
@@ -1697,7 +1682,7 @@ GM_addStyle(`
             // 迭代评分窗口：从紧窗口[target-1, target+1]开始，每次各扩展1直到找到可行解 / Iterative rating window: start tight [target-1, target+1], expand by 1 each side until solution found
             const ratingReq = sbcData.constraints.find(r => r.requirementKey === "TEAM_RATING" && r.scope === "GREATER");
             const ratingTarget = ratingReq ? ratingReq.eligibilityValues[0] : 0;
-            const maxFloorDrop = ratingTarget >= 84 ? 4 : (ratingTarget > 0 ? 99 : 0);
+            const maxFloorDrop = ratingTarget >= 84 ? 5 : (ratingTarget > 0 ? 99 : 0);
 
             // 无条件注入当前阵容中的虚拟球员到可用库（价格 × conceptPremium%），使求解器能用真实球员替换
             // Unconditionally inject concept players from current squad into pool (price × conceptPremium%) so solver can replace them with real players
@@ -1749,7 +1734,9 @@ GM_addStyle(`
             const currentSquad = _challenge.squad._players.slice(0, 11).map(m => playerById.get(m._item?.id) || null);
             if (checkConstraints(currentSquad, sbcData.formation, sbcData.constraints)) {
                 bestResult = { feasible: true, cost: squadCost(currentSquad), squad: currentSquad, lsId: 0 };
-                bestCappedPlayers = players;
+                bestCappedPlayers = ratingTarget > 0
+                    ? players.filter(p => p.rating >= ratingTarget - maxFloorDrop)
+                    : players;
             }
 
             // 寻找能产生可行解的最小评分窗口 / Find the minimum window that yields a feasible solution
