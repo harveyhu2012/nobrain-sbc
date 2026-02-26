@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      1.2.1
+// @version      1.2.2
 // @description  Offline SBC solver using greedy + hill climbing, no backend required
 // @author       Harvey Hu
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -217,8 +217,13 @@ GM_addStyle(`
         _langDetected = true;
         try {
             const locale = services.Localization.locale;
-            if (!locale.language.startsWith("zh")) aisbcLang = 1;
-        } catch (e) { /* 默认中文 / default Chinese */ }
+            const lang = locale.language;
+            const chosen = lang.startsWith("zh") ? "中文" : "English";
+            console.log(`[NoBrainSBC] detectLang: locale.language="${lang}" → ${chosen}`);
+            if (!lang.startsWith("zh")) aisbcLang = 1;
+        } catch (e) {
+            console.log("[NoBrainSBC] detectLang: services.Localization.locale 不可用，默认中文");
+        }
     };
     const aisbcLocale = {
         // 设置面板 / Settings panel
@@ -1473,16 +1478,28 @@ GM_addStyle(`
             return;
         }
 
-        // 语言检测 / Language detection
-        try {
-            if (!services.Localization.locale.language.startsWith("zh")) aisbcLang = 1;
-        } catch (e) { /* 默认中文 / default Chinese */ }
-
         // 预加载价格缓存 / Pre-load price cache
         loadPriceItems();
     };
 
     init();
+
+    // Hook 登录视图，UI 就绪后做语言检测并弹通知 / Detect lang and notify after UI is ready
+    const _origLoginGenerate = UTLoginView.prototype._generate;
+    UTLoginView.prototype._generate = function (...args) {
+        const result = _origLoginGenerate.call(this, ...args);
+        if (!this._langNotified) {
+            this._langNotified = true;
+            try {
+                const lang = services.Localization.locale.language;
+                if (!lang.startsWith("zh")) aisbcLang = 1;
+                console.log(`[NoBrainSBC] detectLang: locale="${lang}" → ${aisbcLang === 0 ? "中文" : "English"}`);
+            } catch (e) {
+                console.log("[NoBrainSBC] detectLang: locale不可用，默认中文");
+            }
+        }
+        return result;
+    };
 
     const _origSetSlots = UTSquadPitchView.prototype.setSlots;
     UTSquadPitchView.prototype.setSlots = function (...args) {
