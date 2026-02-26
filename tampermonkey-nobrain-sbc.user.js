@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      1.2.0
+// @version      1.2.1
 // @description  Offline SBC solver using greedy + hill climbing, no backend required
 // @author       Harvey Hu
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -142,6 +142,68 @@ GM_addStyle(`
         z-index: 2;
         color: #fff;
     }
+    .nobrain-panel-close {
+        position: absolute;
+        top: 0.35rem;
+        right: 0.5rem;
+        background: transparent;
+        border: none;
+        color: #fff;
+        font-size: 1.2rem;
+        cursor: pointer;
+        line-height: 1;
+        padding: 0;
+    }
+    .nobrain-buy-panel {
+        padding: 0.75rem;
+        background: rgba(17,24,39,0.9);
+        border: 1px solid rgba(255,255,255,0.15);
+        border-radius: 10px;
+        display: none;
+        flex-direction: column;
+        gap: 0.35rem;
+        max-height: 80vh;
+        overflow: hidden;
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 9999;
+        min-width: 320px;
+        box-shadow: 0 12px 24px rgba(0,0,0,0.45);
+        box-sizing: border-box;
+    }
+    .nobrain-buy-content {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        overflow-y: auto;
+        max-height: calc(80vh - 2.5rem);
+    }
+    .nobrain-buy-footer {
+        margin-top: 0.5rem;
+        font-size: 0.85rem;
+        opacity: 0.85;
+        min-height: 1.2rem;
+        text-align: center;
+    }
+    .nobrain-buy-title {
+        font-weight: bold;
+        margin-bottom: 0.35rem;
+    }
+    .nobrain-buy-header-row {
+        display: grid;
+        grid-template-columns: 2fr 1fr 1fr;
+        gap: 0.5rem;
+        font-weight: bold;
+        border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    .nobrain-buy-row {
+        display: grid;
+        grid-template-columns: 2fr 1fr 1fr;
+        gap: 0.5rem;
+        align-items: center;
+    }
 `);
 
 (function () {
@@ -155,7 +217,7 @@ GM_addStyle(`
         _langDetected = true;
         try {
             const locale = services.Localization.locale;
-            if (locale.language !== "zh") aisbcLang = 1;
+            if (!locale.language.startsWith("zh")) aisbcLang = 1;
         } catch (e) { /* 默认中文 / default Chinese */ }
     };
     const aisbcLocale = {
@@ -181,9 +243,41 @@ GM_addStyle(`
         "param.hillClimbMaxIter":       ["爬山迭代次数", "Hill Climb Iterations"],
         "param.innerRestarts":          ["内部重启次数", "Inner Restarts"],
         "param.ilsNoImproveLimit":      ["ILS无改善上限", "ILS No-Improve Limit"],
+        "param.maxPriceIncrements":     ["购买最大加价步数", "Max Price Increment Steps"],
         "param.showPrices":             ["显示球员价格", "Show Player Prices"],
         "param.apiProxy":               ["自定义 API 代理（留空使用内置随机代理）", "Custom API Proxy (leave blank for built-in)"],
         "param.excludePlayers":         ["排除 - 球员", "EXCLUDE - Players"],
+        // 批量购买 / Batch buy
+        "btn.buySquad":                 ["批量购买", "Buy Squad"],
+        "buy.colPlayer":                ["球员", "Player"],
+        "buy.colExpected":              ["预期价格", "Expected"],
+        "buy.colStatus":                ["状态", "Status"],
+        "buy.successAt":                ["成功 @ %1", "Success @ %1"],
+        "buy.title":                    ["批量购买虚拟球员", "Buying concept players"],
+        "buy.queued":                   ["等待中", "Queued"],
+        "buy.buying":                   ["购买中...", "Buying..."],
+        "buy.success":                  ["成功", "Success"],
+        "buy.failed":                   ["失败", "Failed"],
+        "buy.missingPrice":             ["无价格", "No price"],
+        "buy.noListing":                ["无挂牌", "No listing"],
+        "buy.priceTooHigh":             ["价格过高", "Price too high"],
+        "buy.skipped":                  ["市价%1 > 上限%2", "Market %1 > Limit %2"],
+        "buy.bidRejected":              ["出价被拒", "Bid rejected"],
+        "buy.alreadyOwned":             ["已拥有", "Already owned"],
+        "buy.error":                    ["出错", "Error"],
+        "buy.nextIn":                   ["下一个", "Next in"],
+        "buy.closingIn":                ["即将关闭", "Closing soon"],
+        "notify.noConcepts":            ["阵容中无虚拟球员", "No concept players in squad"],
+        "notify.noCachedPrice":         ["无缓存价格", "No cached price"],
+        "notify.noActiveListing":       ["无活跃挂牌", "No active listing"],
+        "notify.priceTooHigh":          ["价格过高：%1 > %2", "Price too high: %1 > %2"],
+        "notify.buySuccess":            ["购买成功 @ %1", "Bought @ %1"],
+        "notify.buyFailed":             ["购买失败", "Buy failed"],
+        "notify.buyAttempted":          ["已尝试购买 @ %1", "Buy attempted @ %1"],
+        "notify.buyEncounterError":     ["购买出错", "Buy encountered error"],
+        "notify.buyComplete":           ["购买完成：%1/%2 成功", "Buy complete: %1/%2 succeeded"],
+        "misc.na":                      ["N/A", "N/A"],
+        "misc.closePanel":              ["关闭", "Close"],
         // 按钮 / Buttons
         "btn.solve":                    ["求解SBC", "Solve SBC"],
         "btn.sbcLock":                  ["SBC 锁定", "SBC Lock"],
@@ -648,6 +742,7 @@ GM_addStyle(`
         hillClimbMaxIter: 5000,
         innerRestarts: 6,
         ilsNoImproveLimit: 15,
+        maxPriceIncrements: 1,
         apiProxy: "",
     };
 
@@ -693,6 +788,7 @@ GM_addStyle(`
             ["hillClimbMaxIter", L("param.hillClimbMaxIter"), 100, 50000],
             ["innerRestarts", L("param.innerRestarts"), 1, 20],
             ["ilsNoImproveLimit", L("param.ilsNoImproveLimit"), 1, 100],
+            ["maxPriceIncrements", L("param.maxPriceIncrements"), 0, 20],
         ];
         const UI_TOGGLES = [
             ["showPrices", L("param.showPrices")],
@@ -1379,12 +1475,11 @@ GM_addStyle(`
 
         // 语言检测 / Language detection
         try {
-            if (services.Localization.locale.language !== "zh") aisbcLang = 1;
+            if (!services.Localization.locale.language.startsWith("zh")) aisbcLang = 1;
         } catch (e) { /* 默认中文 / default Chinese */ }
 
-        // 语言就绪后更新 lock/unlock 标签 / Update lock/unlock labels after language is ready
-        lockedLabel = L("btn.sbcUnlock");
-        unlockedLabel = L("btn.sbcLock");
+        // 预加载价格缓存 / Pre-load price cache
+        loadPriceItems();
     };
 
     init();
@@ -1849,12 +1944,132 @@ GM_addStyle(`
             settingsBtn.style.padding = "0";
         }
 
+        // 批量购买按钮 / Batch buy button
+        const buyBtn = createButton("idNobrainBuySquad", L("btn.buySquad"), async () => {
+            if (buyBtn.dataset.running === "true") return;
+            buyBtn.dataset.running = "true";
+            buyBtn.setAttribute("disabled", "disabled");
+            buyBtn.classList.add("disabled");
+
+            const { container: statusContainer, content: statusContent, footer: statusFooter } = getOrCreateBuyStatusPanel();
+            statusContainer.style.display = "flex";
+            statusContent.innerHTML = "";
+            statusFooter.textContent = "";
+
+            const titleBlock = document.createElement("div");
+            titleBlock.textContent = L("buy.title");
+            titleBlock.className = "nobrain-buy-title";
+            statusContent.appendChild(titleBlock);
+
+            const conceptItems = getConceptsInSquad();
+            if (!conceptItems.length) {
+                showNotification(L("notify.noConcepts"), UINotificationType.NEGATIVE);
+                delete buyBtn.dataset.running;
+                buyBtn.removeAttribute("disabled");
+                buyBtn.classList.remove("disabled");
+                return;
+            }
+
+            let successCount = 0;
+            try {
+                const headerRow = document.createElement("div");
+                headerRow.className = "nobrain-buy-header-row";
+                [L("buy.colPlayer"), L("buy.colExpected"), L("buy.colStatus")].forEach((lbl) => {
+                    const span = document.createElement("span");
+                    span.textContent = lbl;
+                    headerRow.appendChild(span);
+                });
+                statusContent.appendChild(headerRow);
+
+                const rowData = conceptItems.map((conceptItem) => {
+                    const name = (conceptItem?._staticData?.firstName + " " + conceptItem?._staticData?.lastName).trim() || conceptItem?._staticData?.lastName || String(conceptItem?.definitionId || "");
+                    const rawExpectedPrice = getPrice(conceptItem);
+                    const expectedPrice = typeof rawExpectedPrice === "number" && Number.isFinite(rawExpectedPrice) && rawExpectedPrice > 0 ? rawExpectedPrice : NaN;
+                    const expectedLabel = Number.isFinite(expectedPrice) ? expectedPrice.toLocaleString() : L("misc.na");
+                    const row = document.createElement("div");
+                    row.className = "nobrain-buy-row";
+                    const nameSpan = document.createElement("span"); nameSpan.textContent = name;
+                    const priceSpan = document.createElement("span"); priceSpan.textContent = expectedLabel;
+                    const statusSpan = document.createElement("span"); statusSpan.textContent = L("buy.queued");
+                    row.append(nameSpan, priceSpan, statusSpan);
+                    statusContent.appendChild(row);
+                    return { conceptItem, expectedLabel, statusSpan };
+                });
+
+                statusContent.scrollTop = statusContent.scrollHeight;
+
+                for (let i = 0; i < rowData.length; i++) {
+                    const { conceptItem, expectedLabel, statusSpan } = rowData[i];
+                    statusSpan.textContent = L("buy.buying");
+                    statusSpan.style.color = "";
+
+                    const result = await buyConceptPlayer(conceptItem, { suppressNotifications: true });
+
+                    if (result?.success) {
+                        successCount += 1;
+                        const label = result?.priceLabel || expectedLabel;
+                        statusSpan.textContent = label ? L("buy.successAt", label) : L("buy.success");
+                        statusSpan.style.color = "#07f468";
+                    } else {
+                        let reasonLabel = L("buy.failed");
+                        if (result?.reason === "alreadyOwned") {
+                            reasonLabel = L("buy.alreadyOwned");
+                            statusSpan.style.color = "#aaa";
+                        } else if (result?.reason === "noCachedPrice") {
+                            reasonLabel = L("buy.missingPrice");
+                        } else if (result?.reason === "noListing") {
+                            reasonLabel = L("buy.noListing");
+                        } else if (result?.reason === "priceAboveBaseline") {
+                            const baselineLabel = result?.baselineLabel || (Number.isFinite(result?.baseline) ? result.baseline.toLocaleString() : "unknown");
+                            const priceLabel = result?.priceLabel || expectedLabel;
+                            reasonLabel = priceLabel && baselineLabel ? L("buy.skipped", priceLabel, baselineLabel) : L("buy.priceTooHigh");
+                        } else if (result?.reason === "bidFailed") {
+                            reasonLabel = L("buy.bidRejected");
+                        } else if (result?.reason === "error") {
+                            reasonLabel = L("buy.error");
+                        }
+                        if (result?.reason !== "alreadyOwned") statusSpan.style.color = "#f40727";
+                        statusSpan.textContent = reasonLabel;
+                    }
+
+                    if (i < rowData.length - 1) {
+                        const delay = 2000 + Math.floor(Math.random() * 3000);
+                        statusFooter.textContent = `${L("buy.nextIn")} ${(delay / 1000).toFixed(1)}s`;
+                        await new Promise((r) => setTimeout(r, delay));
+                        statusFooter.textContent = "";
+                    } else {
+                        statusFooter.textContent = "";
+                    }
+                }
+
+                showNotification(
+                    L("notify.buyComplete", successCount, conceptItems.length),
+                    successCount === conceptItems.length ? UINotificationType.POSITIVE : UINotificationType.NEGATIVE
+                );
+            } catch (err) {
+                console.error("[NoBrainSBC] Buy squad error", err);
+                showNotification(L("notify.buyEncounterError"), UINotificationType.NEGATIVE);
+            } finally {
+                statusFooter.textContent = L("buy.closingIn");
+                await new Promise((r) => setTimeout(r, 5000));
+                statusContainer.style.display = "none";
+                statusContent.innerHTML = "";
+                statusFooter.textContent = "";
+                delete buyBtn.dataset.running;
+                buyBtn.removeAttribute("disabled");
+                buyBtn.classList.remove("disabled");
+            }
+        });
+        buyBtn.style.flex = "1";
+        buyBtn.classList.add("mini");
+
         // 找到现有按钮容器并追加 / Find the existing button container and append
         const existingBtn = document.getElementById("idSolveSbcNC");
         if (existingBtn && existingBtn.parentNode) {
             existingBtn.parentNode.appendChild(offlineBtn);
+            existingBtn.parentNode.appendChild(buyBtn);
             if (settingsBtn) existingBtn.parentNode.appendChild(settingsBtn);
-            } else {
+        } else {
             // 回退：插入到兑换按钮前 / Fallback: insert before exchange button
             try {
                 const container = document.createElement("div");
@@ -1864,6 +2079,7 @@ GM_addStyle(`
                 container.style.padding = "0 0.5rem";
                 offlineBtn.style.flex = "1";
                 container.appendChild(offlineBtn);
+                container.appendChild(buyBtn);
                 if (settingsBtn) container.appendChild(settingsBtn);
                 this._btnExchange.__root.parentNode.insertBefore(container, this._btnExchange.__root);
             } catch (e) {
@@ -1899,13 +2115,6 @@ GM_addStyle(`
     const getPriceDiv = (item) => {
         if (!getSharedSettings("showPrices") || !item.definitionId) return null;
         if (!cachedPriceItems) {
-            if (!getPriceDiv._loading) {
-                getPriceDiv._loading = true;
-                loadPriceItems().then(() => {
-                    document.querySelectorAll(".aisbc-price-label").forEach(el => el.remove());
-                    document.querySelectorAll(".ut-item-view").forEach(el => el.dispatchEvent(new Event("aisbc-refresh")));
-                });
-            }
             return null;
         }
         const entry = cachedPriceItems[item.definitionId];
@@ -1924,21 +2133,21 @@ GM_addStyle(`
     const UTPlayerItemView_renderItem = UTPlayerItemView.prototype.renderItem;
     UTPlayerItemView.prototype.renderItem = function (item, t) {
         const result = UTPlayerItemView_renderItem.call(this, item, t);
-        const el = getPriceDiv(item);
-        if (this.__root && el) this.__root.prepend(el);
-        if (this.__root) {
-            this.__root.classList.toggle("locked", isItemLocked(item));
-            this.__root.addEventListener("aisbc-refresh", () => {
-                const fresh = getPriceDiv(item);
-                if (fresh) this.__root.prepend(fresh);
-            }, { once: true });
+        const root = this.__root;
+        if (root) {
+            setTimeout(() => {
+                if (!root) return;
+                const el = getPriceDiv(item);
+                if (el) root.prepend(el);
+                root.classList.toggle("locked", isItemLocked(item));
+            }, 0);
         }
         return result;
     };
 
     // ─── 球员卡片 Lock/Unlock 按钮注入 / Player Card Lock/Unlock Button Injection ─
-    let lockedLabel = L("btn.sbcUnlock");
-    let unlockedLabel = L("btn.sbcLock");
+    let lockedLabel = () => L("btn.sbcUnlock");
+    let unlockedLabel = () => L("btn.sbcLock");
 
     const insertAfter = (newNode, existingNode) => {
         const getRoot = el => el.getRootElement ? el.getRootElement() : el;
@@ -1951,7 +2160,7 @@ GM_addStyle(`
         const result = UTDefaultSetItem.call(this, e, t);
         if (e.loans > -1 || !e.isPlayer() || !e.id || e.isTimeLimited()) return result;
         if (!e?.duplicateId > 0 && !isItemFixed(e) && !this.lockUnlockButton) {
-            const label = isItemLocked(e) ? lockedLabel : unlockedLabel;
+            const label = isItemLocked(e) ? lockedLabel() : unlockedLabel();
             const button = new UTGroupButtonControl();
             button.init();
             insertAfter(button, this._btnDiscard);
@@ -1960,11 +2169,11 @@ GM_addStyle(`
             button.addTarget(this, async () => {
                 if (isItemLocked(e)) {
                     unlockItem(e);
-                    button.setText(unlockedLabel);
+                    button.setText(unlockedLabel());
                     showNotification(L("notify.unlocked"), UINotificationType.POSITIVE);
                 } else {
                     lockItem(e);
-                    button.setText(lockedLabel);
+                    button.setText(lockedLabel());
                     showNotification(L("notify.locked"), UINotificationType.POSITIVE);
                 }
                 getControllerInstance().applyDataChange();
@@ -1980,7 +2189,7 @@ GM_addStyle(`
         const result = UTDefaultAction.call(this, e, t, i, o, n, r, s);
         if (e.loans > -1 || !e.isPlayer() || !e.id || e.isTimeLimited()) return result;
         if (!e?.duplicateId > 0 && !isItemFixed(e) && !this.lockUnlockButton) {
-            const label = isItemLocked(e) ? lockedLabel : unlockedLabel;
+            const label = isItemLocked(e) ? lockedLabel() : unlockedLabel();
             const button = new UTGroupButtonControl();
             button.init();
             insertAfter(button, this._discardButton);
@@ -1989,11 +2198,11 @@ GM_addStyle(`
             button.addTarget(this, async () => {
                 if (isItemLocked(e)) {
                     unlockItem(e);
-                    button.setText(unlockedLabel);
+                    button.setText(unlockedLabel());
                     showNotification(L("notify.unlocked"), UINotificationType.POSITIVE);
                 } else {
                     lockItem(e);
-                    button.setText(lockedLabel);
+                    button.setText(lockedLabel());
                     showNotification(L("notify.locked"), UINotificationType.POSITIVE);
                 }
                 try {
@@ -2006,6 +2215,350 @@ GM_addStyle(`
             this.lockUnlockButton = button;
         }
         return result;
+    };
+
+    // ─── 批量购买虚拟球员 / Batch Buy Concept Players ────────────────────────────
+
+    const fetchUnassigned = () => {
+        repositories.Item.unassigned.clear();
+        repositories.Item.unassigned.reset();
+        return new Promise((resolve) => {
+            services.Item.requestUnassignedItems().observe(undefined, (_s, response) => {
+                resolve([...response.response.items]);
+            });
+        });
+    };
+
+    const moveUnassignedToClub = async () => {
+        try {
+            const ulist = await fetchUnassigned();
+            const toTeam = ulist.filter((item) => item.isMovable());
+            if (toTeam.length > 0) {
+                console.log(`[NoBrainSBC] 移动未分配球员到俱乐部 / Moving unassigned to club: count=${toTeam.length}`);
+                services.Item.move(toTeam, 7);
+            }
+        } catch (err) {
+            console.error("[NoBrainSBC] moveUnassignedToClub error", err);
+        }
+    };
+
+    const fetchMarketPrice = async (player) => {
+        if (!player) return null;
+
+        const DEFAULT_TIERS = [
+            { min: 0, inc: 50 },
+            { min: 1000, inc: 100 },
+            { min: 10000, inc: 250 },
+            { min: 50000, inc: 500 },
+            { min: 100000, inc: 1000 },
+            { min: 200000, inc: 2000 },
+            { min: 500000, inc: 5000 },
+            { min: 1000000, inc: 10000 },
+        ];
+        const tiers =
+            Array.isArray(UTCurrencyInputControl?.PRICE_TIERS) && UTCurrencyInputControl.PRICE_TIERS.length
+            ? [...UTCurrencyInputControl.PRICE_TIERS].sort((a, b) => a.min - b.min)
+            : DEFAULT_TIERS;
+
+        const MAX_RESULTS = 21;
+        const MAX_CAP_LIMIT = 15000000;
+
+        let bestListing = null;
+        let bestPrice = Number.POSITIVE_INFINITY;
+
+        const registerCandidate = (price, item) => {
+            if (!Number.isFinite(price) || !item) return;
+            if (price < bestPrice || !bestListing) { bestPrice = price; bestListing = item; }
+        };
+
+        const getIncrement = (price) => {
+            let inc = tiers[0]?.inc || 50;
+            for (const tier of tiers) {
+                if (price >= tier.min) inc = tier.inc; else break;
+            }
+            return inc || 50;
+        };
+        const alignDown = (price) => {
+            if (!Number.isFinite(price) || price <= 0) return 0;
+            const inc = getIncrement(price);
+            return Math.max(0, Math.floor(price / inc) * inc);
+        };
+        const alignUp = (price) => {
+            if (!Number.isFinite(price) || price <= 0) return 0;
+            const inc = getIncrement(price);
+            return Math.max(0, Math.ceil(price / inc) * inc);
+        };
+
+        const limits = player._itemPriceLimits || {};
+        const MIN_CAP = alignDown(Math.max(0, limits.minimum || 0));
+        const MAX_CAP = Math.min(MAX_CAP_LIMIT, alignUp(Math.max(limits.maximum || MAX_CAP_LIMIT, MIN_CAP || 0)));
+
+        const searchViewModel = new UTBucketedItemSearchViewModel();
+        const ensurePlayerFilter = (criteria) => { criteria.defId = [player.definitionId]; return criteria; };
+        const getBaseCriteria = () => { const base = searchViewModel.searchCriteria || {}; searchViewModel.searchCriteria = ensurePlayerFilter(base); return searchViewModel.searchCriteria; };
+        const buildCriteria = (maxBuy) => {
+            const criteria = getBaseCriteria();
+            if (typeof maxBuy === "number" && Number.isFinite(maxBuy) && maxBuy > 0) criteria.maxBuy = Math.floor(maxBuy);
+            else delete criteria.maxBuy;
+            return criteria;
+        };
+
+        const stepDown = (price) => {
+            if (!Number.isFinite(price) || price <= 0) return 0;
+            let current = alignDown(price);
+            let guard = 0;
+            while (current > MIN_CAP && guard < 5) {
+                const inc = getIncrement(current);
+                const next = alignDown(Math.max(MIN_CAP, current - inc));
+                if (next !== current) return Math.max(next, MIN_CAP);
+                current = Math.max(MIN_CAP, current - inc);
+                guard += 1;
+            }
+            return MIN_CAP;
+        };
+        const stepUp = (price) => {
+            const base = Math.max(0, Number(price) || 0);
+            let current = alignUp(base);
+            let guard = 0;
+            while (guard < 5) {
+                const inc = getIncrement(current || base || 0);
+                const next = alignUp(current + inc);
+                if (next > current) return Math.min(next, MAX_CAP);
+                current = Math.min(current + inc, MAX_CAP);
+                guard += 1;
+            }
+            return Math.min(current, MAX_CAP);
+        };
+
+        const doSearch = async (maxBuy) => new Promise((resolve) => {
+            services.Item.clearTransferMarketCache();
+            const criteria = buildCriteria(maxBuy);
+            services.Item.searchTransferMarket(criteria, 1).observe(undefined, (_s, response) => {
+                const items = Array.isArray(response?.data?.items)
+                    ? response.data.items.filter((item) => item._auction && item._auction.tradeState === "active")
+                    : [];
+                resolve(items);
+            });
+        });
+
+        const extractBuy = (item) =>
+            item && item._auction && typeof item._auction.buyNowPrice === "number"
+            ? item._auction.buyNowPrice : Number.POSITIVE_INFINITY;
+
+        const evaluate = async (cap) => {
+            let bounded = cap;
+            if (bounded !== undefined && bounded !== null) bounded = Math.min(MAX_CAP, Math.max(MIN_CAP, bounded));
+            const rawEntries = await doSearch(bounded);
+            const entries = Array.isArray(rawEntries) ? rawEntries : [];
+            const priceList = [];
+            let minItem = null;
+            let minPrice = Number.POSITIVE_INFINITY;
+            for (const entry of entries) {
+                const price = extractBuy(entry);
+                if (!Number.isFinite(price)) continue;
+                priceList.push(price);
+                if (price < minPrice) { minPrice = price; minItem = entry; }
+            }
+            registerCandidate(minPrice, minItem);
+            return { count: priceList.length, min: priceList.length ? minPrice : Number.POSITIVE_INFINITY, item: minItem };
+        };
+
+        const refineBetween = async (emptyCap, filledCap) => {
+            let low = Math.max(MIN_CAP, emptyCap || MIN_CAP);
+            let high = Math.max(low + getIncrement(filledCap || low), filledCap);
+            high = Math.min(high, MAX_CAP);
+            let guard = 0;
+            while (low + getIncrement(high) < high && guard < 40) {
+                const rawMid = Math.floor((low + high) / 2);
+                let mid = alignUp(rawMid);
+                if (mid <= low) mid = alignUp(low + getIncrement(low || high));
+                if (mid >= high) mid = alignDown(high - getIncrement(high));
+                if (mid <= low || mid >= high) break;
+                const midEval = await evaluate(mid);
+                guard += 1;
+                if (midEval.count === 0) low = mid;
+                else {
+                    if (midEval.count < MAX_RESULTS) return Number.isFinite(bestPrice) ? bestPrice : Number.isFinite(midEval.min) ? midEval.min : Number.POSITIVE_INFINITY;
+                    high = mid;
+                }
+            }
+            return Number.isFinite(bestPrice) ? bestPrice : Number.POSITIVE_INFINITY;
+        };
+
+        const ensureResults = async (cap) => {
+            let upper = cap !== null ? alignUp(Math.max(cap, MIN_CAP)) : null;
+            let evalResult = await evaluate(upper);
+            if (evalResult.count === 0) {
+                let low = upper ?? MIN_CAP;
+                let high = upper ?? Math.max(MIN_CAP, stepUp(MIN_CAP));
+                let guard = 0;
+                while (evalResult.count === 0 && guard < 50 && high <= MAX_CAP) {
+                    low = high; high = stepUp(high); evalResult = await evaluate(high); guard += 1;
+                }
+                if (evalResult.count === 0) {
+                    const fallback = await evaluate(undefined);
+                    if (!fallback.count) return { cap: null, eval: fallback };
+                    if (fallback.count < MAX_RESULTS) return { cap: null, eval: fallback };
+                    upper = alignUp(fallback.min);
+                    evalResult = await evaluate(upper);
+                    if (!evalResult.count) {
+                        const stepped = stepUp(upper);
+                        evalResult = await evaluate(stepped);
+                        return { cap: stepped, eval: evalResult };
+                    }
+                    return { cap: upper, eval: evalResult };
+                }
+                return { cap: high, lowerBound: low, eval: evalResult };
+            }
+            return { cap: upper, eval: evalResult };
+        };
+
+        const stored = getPrice(player);
+        const startCap = Number.isFinite(stored) && stored > 0 ? Math.min(MAX_CAP, Math.max(MIN_CAP, stored)) : null;
+
+        let { cap: upperCap, lowerBound, eval: upperEval } = await ensureResults(startCap);
+        if (upperEval.count === 0) return null;
+        if (upperEval.count < MAX_RESULTS) return bestListing;
+
+        if (!upperCap || !Number.isFinite(upperCap)) {
+            upperCap = alignUp(upperEval.min);
+            upperEval = await evaluate(upperCap);
+            if (upperEval.count === 0) {
+                const stepped = stepUp(upperCap);
+                upperCap = stepped;
+                upperEval = await evaluate(upperCap);
+                if (upperEval.count === 0) return null;
+                if (upperEval.count < MAX_RESULTS) return bestListing;
+            }
+            if (upperEval.count < MAX_RESULTS) return bestListing;
+        }
+
+        let lowerCapValue = lowerBound ?? stepDown(upperCap);
+        let lowerEval = await evaluate(lowerCapValue);
+        let guardDown = 0;
+        while (lowerCapValue > MIN_CAP && lowerEval.count > 0 && guardDown < 50) {
+            if (lowerEval.count < MAX_RESULTS) return bestListing;
+            upperCap = lowerCapValue;
+            lowerCapValue = stepDown(lowerCapValue);
+            lowerEval = await evaluate(lowerCapValue);
+            guardDown += 1;
+        }
+
+        if (lowerEval.count === 0) {
+            await refineBetween(lowerCapValue, upperCap);
+            return Number.isFinite(bestPrice) ? bestListing : null;
+        }
+        return bestListing;
+    };
+
+    const buyConceptPlayer = async (item, options = {}) => {
+        const { suppressNotifications = false } = options;
+        const notify = (message, type) => { if (!suppressNotifications) showNotification(message, type); };
+
+        // 计算允许加价后的最高价格 / Compute max allowed price after N increment steps above baseline
+        const computeMaxAllowedPrice = (basePrice, steps) => {
+            if (!steps || steps <= 0) return basePrice;
+            let price = basePrice;
+            for (let i = 0; i < steps; i++) {
+                const next = UTCurrencyInputControl?.getIncrementAboveVal?.(price);
+                if (typeof next === "number" && next > price) price = next;
+                else break;
+            }
+            return price;
+        };
+
+        try {
+            // 购买前检查俱乐部是否已有相同 definitionId 的球员 / Check club for duplicate before buying
+            const clubPlayers = await fetchPlayers();
+            const alreadyOwned = clubPlayers.some((p) => p.definitionId === item.definitionId);
+            if (alreadyOwned) {
+                console.log(`[NoBrainSBC] 跳过已拥有球员 / Skipping already owned player: defId=${item.definitionId}`);
+                return { success: false, reason: "alreadyOwned" };
+            }
+
+            const baselinePrice = Number(getPrice(item));
+            if (!Number.isFinite(baselinePrice) || baselinePrice <= 0) {
+                notify(L("notify.noCachedPrice"), UINotificationType.NEGATIVE);
+                return { success: false, reason: "noCachedPrice" };
+            }
+
+            const listing = await fetchMarketPrice(item);
+            const listingPrice = Number(listing?._auction?.buyNowPrice);
+            if (!Number.isFinite(listingPrice) || listingPrice <= 0) {
+                notify(L("notify.noActiveListing"), UINotificationType.NEGATIVE);
+                return { success: false, reason: "noListing" };
+            }
+
+            const lowestPrice = listingPrice;
+            const priceLabel = lowestPrice.toLocaleString();
+
+            const maxIncrements = Number(getOwnSettings().maxPriceIncrements ?? SETTINGS_DEFAULTS.maxPriceIncrements) || 0;
+            const maxAllowedPrice = computeMaxAllowedPrice(baselinePrice, maxIncrements);
+            if (lowestPrice > maxAllowedPrice) {
+                notify(L("notify.priceTooHigh", priceLabel, maxAllowedPrice.toLocaleString()), UINotificationType.NEGATIVE);
+                return { success: false, reason: "priceAboveBaseline", price: lowestPrice, priceLabel, baseline: maxAllowedPrice, baselineLabel: maxAllowedPrice.toLocaleString() };
+            }
+
+            const bidAttempt = services.Item.bid(listing, lowestPrice);
+            if (bidAttempt && typeof bidAttempt.observe === "function") {
+                return await new Promise((resolve) => {
+                    bidAttempt.observe({}, async (_obs, response) => {
+                        const success = response?.success !== false;
+                        if (success) {
+                            try { await moveUnassignedToClub(); } catch (err) { console.error("[NoBrainSBC] moveUnassignedToClub error", err); }
+                        }
+                        notify(
+                            success ? L("notify.buySuccess", priceLabel) : L("notify.buyFailed"),
+                            success ? UINotificationType.POSITIVE : UINotificationType.NEGATIVE
+                        );
+                        resolve({ success, reason: success ? "success" : "bidFailed", price: lowestPrice, priceLabel });
+                    });
+                });
+            }
+
+            notify(L("notify.buyAttempted", priceLabel), UINotificationType.POSITIVE);
+            return { success: true, reason: "attempted", price: lowestPrice, priceLabel };
+        } catch (error) {
+            console.error("[NoBrainSBC] buyConceptPlayer error", error);
+            notify(L("notify.buyEncounterError"), UINotificationType.NEGATIVE);
+            return { success: false, reason: "error", error };
+        }
+    };
+
+    const getOrCreateBuyStatusPanel = () => {
+        const panelId = "nobrain-buy-squad-status";
+        let container = document.getElementById(panelId);
+        if (!container) {
+            container = document.createElement("div");
+            container.id = panelId;
+            container.className = "nobrain-buy-panel";
+
+            const closeBtn = document.createElement("button");
+            closeBtn.type = "button";
+            closeBtn.textContent = "×";
+            closeBtn.setAttribute("aria-label", L("misc.closePanel"));
+            closeBtn.className = "nobrain-panel-close";
+            closeBtn.addEventListener("click", () => { container.style.display = "none"; });
+
+            const content = document.createElement("div");
+            content.className = "nobrain-buy-content";
+
+            const footer = document.createElement("div");
+            footer.className = "nobrain-buy-footer";
+
+            container.append(closeBtn, content, footer);
+            document.body.appendChild(container);
+        }
+        const content = container.querySelector(".nobrain-buy-content");
+        const footer = container.querySelector(".nobrain-buy-footer");
+        return { container, content, footer };
+    };
+
+    const getConceptsInSquad = () => {
+        const controller = cntlr.current();
+        const _squad = controller?._squad || controller?._challenge?.squad;
+        const squadPlayers = Array.isArray(_squad?._players) ? _squad._players : [];
+        return squadPlayers.map((slot) => slot?._item).filter((item) => item && item.concept);
     };
 
 })();
