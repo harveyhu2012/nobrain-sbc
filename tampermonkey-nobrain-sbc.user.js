@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.18
+// @version      0.19
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       Harvey Hu
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -225,7 +225,7 @@ GM_addStyle(`
         // 设置项标签 / Setting labels
         "param.excludeSbc":             ["排除 SBC 球员", "Exclude SBC Players"],
         "param.excludeObjective":       ["排除目标球员", "Exclude Objective Players"],
-        "param.excludeSpecial":         ["排除特殊球员", "Exclude Special Players"],
+        "param.excludeSpecial":         ["排除特殊球员（周黑除外）", "Exclude Special Players (excl. TOTW)"],
         "param.excludeTradable":        ["排除可交易球员", "Exclude Tradable Players"],
         "param.excludeExtinct":         ["排除绝版球员", "Exclude Extinct Players"],
         "param.duplicateDiscount":      ["重复球员折扣 (%)", "Duplicate Discount (%)"],
@@ -1631,7 +1631,7 @@ GM_addStyle(`
                 .filter(item => item.loans < 0)
                 .filter(item => !item.isTimeLimited())
                 .filter(item => !activeSquadPlayerIds.has(item.id))
-                .filter(item => !(item.isSpecial && item.isSpecial() && excludeSpecial))
+                .filter(item => !(item.isSpecial && item.isSpecial() && excludeSpecial && item.rareflag !== 3))
                 .filter(item => !(item.isTradeable && item.isTradeable() && excludeTradable))
                 .filter(item => !(cachedPriceItems[item.definitionId]?.isSbc && excludeSbc))
                 .filter(item => !(cachedPriceItems[item.definitionId]?.isObjective && excludeObjective))
