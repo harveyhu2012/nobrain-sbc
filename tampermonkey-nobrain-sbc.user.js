@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.23
+// @version      0.24
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       Harvey Hu
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -66,10 +66,35 @@ GM_addStyle(`
         min-width: 320px;
         max-width: 480px;
         width: 90%;
-        max-height: 80vh;
-        overflow-y: auto;
+        height: 70vh;
+        max-height: 70vh;
+        display: flex;
+        flex-direction: column;
         box-shadow: 0 8px 32px rgba(0,0,0,0.5);
     }
+    .aisbc-tabs {
+        display: flex;
+        gap: 4px;
+        margin-bottom: 16px;
+        border-bottom: 1px solid rgba(255,255,255,0.15);
+        padding-bottom: 8px;
+    }
+    .aisbc-tab {
+        padding: 4px 12px;
+        font-size: 12px;
+        cursor: pointer;
+        border-radius: 4px;
+        opacity: 0.6;
+        background: transparent;
+        border: none;
+        color: inherit;
+    }
+    .aisbc-tab.active {
+        opacity: 1;
+        background: rgba(255,255,255,0.12);
+    }
+    .aisbc-tab-panel { display: none; flex: 1; overflow-y: auto; min-height: 0; }
+    .aisbc-tab-panel.active { display: flex; flex-direction: column; }
     .aisbc-settings-card h2 {
         margin: 0 0 16px;
         font-size: 16px;
@@ -218,9 +243,10 @@ GM_addStyle(`
     const aisbcLocale = {
         // 设置面板 / Settings panel
         "settings.title":               ["⚙ Nobrain SBC 设置", "⚙ Nobrain SBC Settings"],
-        "settings.algo":                ["算法设置", "Algorithm"],
-        "settings.exclude":             ["排除选项", "Exclude"],
-        "settings.ui":                  ["界面设置", "UI"],
+        "settings.algo":                ["算法", "Algorithm"],
+        "settings.exclude":             ["排除", "Exclude"],
+        "settings.ui":                  ["界面", "UI"],
+        "settings.tabPlayers":          ["排除球员", "Players"],
         "settings.save":                ["保存", "Save"],
         "settings.saved":               ["设置已保存", "Settings saved"],
         "settings.close":               ["关闭", "Close"],
@@ -228,7 +254,7 @@ GM_addStyle(`
         "settings.resetDone":           ["设置已恢复默认", "Settings reset to default"],
         // 设置项标签 / Setting labels
         "param.excludeSbc":             ["排除 SBC 球员", "Exclude SBC Players"],
-        "param.excludeObjective":       ["排除目标球员", "Exclude Objective Players"],
+        "param.excludeObjective":       ["排除任务球员", "Exclude Objective Players"],
         "param.excludeSpecial":         ["排除特殊球员（周黑除外）", "Exclude Special Players (excl. TOTW)"],
         "param.excludeTradable":        ["排除可交易球员", "Exclude Tradable Players"],
         "param.excludeExtinct":         ["排除绝版球员", "Exclude Extinct Players"],
@@ -272,6 +298,7 @@ GM_addStyle(`
         "notify.buyEncounterError":     ["购买出错", "Buy encountered error"],
         "notify.buyComplete":           ["购买完成：%1/%2 成功", "Buy complete: %1/%2 succeeded"],
         "misc.na":                      ["N/A", "N/A"],
+        "misc.loading":                 ["加载中...", "Loading..."],
         "misc.closePanel":              ["关闭", "Close"],
         // 按钮 / Buttons
         "btn.solve":                    ["求解SBC", "Solve SBC"],
@@ -860,14 +887,26 @@ GM_addStyle(`
         overlay.innerHTML = `
             <div class="aisbc-settings-card">
                 <h2>${L("settings.title")}</h2>
-                <h3>${L("settings.algo")}</h3>
-                ${makeNumberRows(ALGO_NUMBERS)}
-                <h3>${L("settings.exclude")}</h3>
-                ${makeToggleRows(EXCLUDE_TOGGLES)}
-                <div id="aisbc-exclude-players-anchor"></div>
-                <h3>${L("settings.ui")}</h3>
-                ${makeToggleRows(UI_TOGGLES)}
-                ${textRows}
+                <div class="aisbc-tabs">
+                    <button class="aisbc-tab active" data-tab="algo">${L("settings.algo")}</button>
+                    <button class="aisbc-tab" data-tab="exclude">${L("settings.exclude")}</button>
+                    <button class="aisbc-tab" data-tab="players">${L("settings.tabPlayers")}</button>
+                    <button class="aisbc-tab" data-tab="ui">${L("settings.ui")}</button>
+                </div>
+                <div class="aisbc-tab-panel active" data-panel="algo">
+                    ${makeNumberRows(ALGO_NUMBERS)}
+                </div>
+                <div class="aisbc-tab-panel" data-panel="exclude">
+                    ${makeToggleRows(EXCLUDE_TOGGLES)}
+                </div>
+                <div class="aisbc-tab-panel" data-panel="players">
+                    <div id="aisbc-exclude-players-anchor"></div>
+                    <div style="height:280px;flex-shrink:0;"></div>
+                </div>
+                <div class="aisbc-tab-panel" data-panel="ui">
+                    ${makeToggleRows(UI_TOGGLES)}
+                    ${textRows}
+                </div>
                 <div class="aisbc-settings-footer">
                     <button class="btn-standard mini" id="aisbc-settings-reset"><span class="button__text">${L("settings.reset")}</span></button>
                     <button class="btn-standard mini" id="aisbc-settings-save"><span class="button__text">${L("settings.save")}</span></button>
@@ -904,18 +943,35 @@ GM_addStyle(`
 
         document.body.appendChild(overlay);
 
-        // 排除球员多选，插入排除选项块 / Exclude players multiselect
-        fetchPlayers().then(players => {
-            if (!document.contains(overlay)) return;
+        // Tab 切换逻辑 / Tab switching logic
+        let playersLoaded = false;
+        const loadPlayersTab = () => {
+            if (playersLoaded) return;
+            playersLoaded = true;
             const anchor = overlay.querySelector("#aisbc-exclude-players-anchor");
-            createChoice(anchor, L("param.excludePlayers"), "excludePlayers",
-                players.map(item => ({
-                    label: (item._staticData.firstName + " " + item._staticData.lastName).trim() || item._staticData.lastName,
-                    value: item.definitionId,
-                    id: item.definitionId,
-                    customProperties: { icon: `<img width="24" src='${getShellUri(item.rareflag, item.rareflag < 4 ? item.getTier() : ItemRatingTier.NONE)}'/>` },
-                }))
-            );
+            anchor.textContent = L("misc.loading");
+            fetchPlayers().then(players => {
+                if (!document.contains(overlay)) return;
+                anchor.textContent = "";
+                createChoice(anchor, L("param.excludePlayers"), "excludePlayers",
+                    players.map(item => ({
+                        label: (item._staticData.firstName + " " + item._staticData.lastName).trim() || item._staticData.lastName,
+                        value: item.definitionId,
+                        id: item.definitionId,
+                        customProperties: { icon: `<img width="24" src='${getShellUri(item.rareflag, item.rareflag < 4 ? item.getTier() : ItemRatingTier.NONE)}'/>` },
+                    }))
+                );
+            });
+        };
+        overlay.querySelectorAll(".aisbc-tab").forEach(tab => {
+            tab.addEventListener("click", () => {
+                overlay.querySelectorAll(".aisbc-tab").forEach(t => t.classList.remove("active"));
+                overlay.querySelectorAll(".aisbc-tab-panel").forEach(p => p.classList.remove("active"));
+                tab.classList.add("active");
+                const panel = overlay.querySelector(`.aisbc-tab-panel[data-panel="${tab.dataset.tab}"]`);
+                if (panel) panel.classList.add("active");
+                if (tab.dataset.tab === "players") loadPlayersTab();
+            });
         });
     };
 
