@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.28
+// @version      0.29
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       Harvey Hu
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -1558,6 +1558,7 @@ GM_addStyle(`
                 const currentPrice = bestSquad[slot]?.price || 15000000;
                 const usedDbIds = new Set(bestSquad.filter((p, i) => p && i !== slot).map(p => p.databaseId));
 
+                const prev = bestSquad[slot];
                 for (const candidate of available) {
                     if ((candidate.price || 15000000) >= currentPrice) {
                         break;
@@ -1565,15 +1566,14 @@ GM_addStyle(`
                     if (usedDbIds.has(candidate.databaseId)) {
                         continue;
                     }
-                    const newSquad = [...bestSquad];
-                    newSquad[slot] = candidate;
-                    const ok = checkConstraints(newSquad, formation, constraints);
+                    bestSquad[slot] = candidate;
+                    const ok = checkConstraints(bestSquad, formation, constraints);
                     if (ok) {
-                        bestSquad = newSquad;
                         bestCost = squadCost(bestSquad);
                         improved = true;
                         break;
                     }
+                    bestSquad[slot] = prev;
                 }
             }
         }
