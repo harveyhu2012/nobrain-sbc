@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.20
+// @version      0.22
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       Harvey Hu
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -275,6 +275,10 @@ GM_addStyle(`
         "misc.closePanel":              ["关闭", "Close"],
         // 按钮 / Buttons
         "btn.solve":                    ["求解SBC", "Solve SBC"],
+        "btn.conceptSolve":             ["虚拟求解", "Concept Solve"],
+        "notify.fsuNotFound":           ["未检测到FSU插件", "FSU not detected"],
+        "notify.fsuFillTimeout":        ["FSU填充超时", "FSU fill timed out"],
+        "notify.fsuCredit":             ["虚拟球员填充调用了 Futcd_kcka 大大的【FSU】EAFC FUT WEB增强器提供的SBC模板填充功能，感谢！", "Squad autofill powered by Futcd_kcka's 【FSU】EAFC FUT WEB Enhancer SBC template feature. Thanks!"],
         "btn.sbcLock":                  ["SBC 锁定", "SBC Lock"],
         "btn.sbcUnlock":                ["SBC 解锁", "SBC Unlock"],
         // 通知 / Notifications
@@ -308,6 +312,22 @@ GM_addStyle(`
 
     // ─── ai-sbc脚本检测 / AI-SBC Detection ──────────────────────────────────────
     const isAiSBCRunning = () => typeof window.fetchLivePlayerPrice === 'function';
+
+    // ─── FSU检测 / FSU Detection ─────────────────────────────────────────────────
+    const isFSURunning = () => typeof unsafeWindow.events !== "undefined";
+    // 获取FSU方案填充按钮（PC: cntlr.left，手机: 从子控制器找）
+    // Get FSU fill squad button (PC: cntlr.left, mobile: search child controllers)
+    const getFsuFillBtn = () => {
+        const left = cntlr.left?.();
+        if (left?._fsu?.fillSquadBtn) return left._fsu.fillSquadBtn;
+        const cur = cntlr.current?.();
+        if (cur?._fsu?.fillSquadBtn) return cur._fsu.fillSquadBtn;
+        const navChildren = cur?.getNavigationController?.()?.childViewControllers || [];
+        for (const c of navChildren) {
+            if (c._fsu?.fillSquadBtn) return c._fsu.fillSquadBtn;
+        }
+        return null;
+    };
 
     // ─── 工具函数 / Utilities ─────────────────────────────────────────────────────
     const showNotification = (message, type) => {
@@ -1963,6 +1983,84 @@ GM_addStyle(`
         offlineBtn.style.flex = "1";
         offlineBtn.classList.add("mini");
 
+        // 虚拟求解按钮（仅 FSU 存在时显示）/ Concept solve button (only shown when FSU is present)
+        let conceptSolveBtn = null;
+        if (isFSURunning()) {
+            conceptSolveBtn = createButton("idConceptSolveSbc", L("btn.conceptSolve"), async () => {
+                const controller = cntlr.current();
+                const _challenge = controller?._challenge;
+                if (!_challenge) {
+                    showNotification(L("notify.noChallenge"), UINotificationType.NEGATIVE);
+                    return;
+                }
+                const fillBtn = getFsuFillBtn();
+                if (!fillBtn) {
+                    showNotification(L("notify.fsuNotFound"), UINotificationType.NEGATIVE);
+                    return;
+                }
+                // 每次登录首次调用时显示致谢提示 / Show credit notice once per session
+                if (!sessionStorage.getItem("nobrainFsuCreditShown")) {
+                    sessionStorage.setItem("nobrainFsuCreditShown", "1");
+                    showNotification(L("notify.fsuCredit"), UINotificationType.POSITIVE);
+                    await new Promise(r => setTimeout(r, 2500));
+                }
+                // Hook events.saveSquad 拦截 FSU 填充完成，阻止其保存
+                // Hook events.saveSquad to intercept FSU fill completion and suppress its save
+                let filled = false;
+                const origSaveSquad = unsafeWindow.events.saveSquad;
+                const nav = cntlr.current()?.getNavigationController?.();
+                const origBack = nav?._eBackButtonTapped?.bind(nav);
+                const restoreBack = () => { if (nav && origBack) nav._eBackButtonTapped = origBack; };
+                try {
+                    if (nav) nav._eBackButtonTapped = () => {};
+                    await new Promise((resolve, reject) => {
+                        const timeout = setTimeout(() => reject(new Error("timeout")), 30000);
+                        // 轮询 FSU 的 info.run.template，取消时提前退出（延迟500ms启动，等getTemplate设置标志）
+                        // Poll FSU's info.run.template to detect cancellation; delay start to let getTemplate set the flag
+                        let pollStarted = false;
+                        const cancelPoll = setInterval(() => {
+                            if (!pollStarted) { pollStarted = true; return; }
+                            if (!unsafeWindow.info?.run?.template) {
+                                clearInterval(cancelPoll);
+                                clearTimeout(timeout);
+                                reject(new Error("cancelled"));
+                            }
+                        }, 500);
+                        unsafeWindow.events.saveSquad = async (c, s, l, a) => {
+                            clearInterval(cancelPoll);
+                            clearTimeout(timeout);
+                            s.removeAllItems();
+                            s.setPlayers(l, true);
+                            filled = true;
+                            resolve();
+                        };
+                        unsafeWindow.events.getTemplate(fillBtn, 1);
+                    });
+                } catch (e) {
+                    if (e.message === "timeout") showNotification(L("notify.fsuFillTimeout"), UINotificationType.NEGATIVE);
+                    // cancelled: 静默退出 / cancelled: silent exit
+                } finally {
+                    unsafeWindow.events.saveSquad = origSaveSquad;
+                    // _eBackButtonTapped 在 nobrainSolveSBC 完成后恢复，不在此处恢复
+                    // _eBackButtonTapped restored after solver completes, not here
+                }
+                if (filled) {
+                    try {
+                        // 等 FSU 的 finally（hideLoader）执行完再开始求解
+                        // Wait for FSU's finally (hideLoader) to run before starting solver
+                        await new Promise(r => setTimeout(r, 100));
+                        await nobrainSolveSBC(_challenge);
+                    } finally {
+                        restoreBack();
+                    }
+                } else {
+                    restoreBack();
+                }
+            });
+            conceptSolveBtn.style.flex = "1";
+            conceptSolveBtn.classList.add("mini");
+        }
+
         // 设置齿轮按钮 / Settings gear button
         const settingsBtn = createButton("idOfflineSbcSettings", "⚙", () => {
             showSettingsPanel();
@@ -2097,6 +2195,7 @@ GM_addStyle(`
         const existingBtn = document.getElementById("idSolveSbcNC");
         if (existingBtn && existingBtn.parentNode) {
             existingBtn.parentNode.appendChild(offlineBtn);
+            if (conceptSolveBtn) existingBtn.parentNode.appendChild(conceptSolveBtn);
             existingBtn.parentNode.appendChild(buyBtn);
             if (settingsBtn) existingBtn.parentNode.appendChild(settingsBtn);
         } else {
@@ -2109,6 +2208,7 @@ GM_addStyle(`
                 container.style.padding = "0 0.5rem";
                 offlineBtn.style.flex = "1";
                 container.appendChild(offlineBtn);
+                if (conceptSolveBtn) container.appendChild(conceptSolveBtn);
                 container.appendChild(buyBtn);
                 if (settingsBtn) container.appendChild(settingsBtn);
                 this._btnExchange.__root.parentNode.insertBefore(container, this._btnExchange.__root);
