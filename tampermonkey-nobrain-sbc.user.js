@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.24
+// @version      0.25
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       Harvey Hu
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -267,6 +267,8 @@ GM_addStyle(`
         "param.maxPriceIncrements":     ["购买最大加价步数", "Max Price Increment Steps"],
         "param.showPrices":             ["显示球员价格", "Show Player Prices"],
         "param.apiProxy":               ["自定义 API 代理（留空使用内置随机代理）", "Custom API Proxy (leave blank for built-in)"],
+        "btn.clearPriceCache":          ["清空价格缓存", "Clear Price Cache"],
+        "btn.clearPriceCacheDone":      ["已清空", "Cleared"],
         "param.excludePlayers":         ["排除 - 球员", "EXCLUDE - Players"],
         // 批量购买 / Batch buy
         "btn.buySquad":                 ["批量购买", "Buy Squad"],
@@ -426,24 +428,40 @@ GM_addStyle(`
 
     // ─── 价格缓存（与ai-sbc脚本共享 IndexedDB）/ Price Cache (shared IndexedDB with ai-sbc script) ─
     let cachedPriceItems = null;
+    let _loadPriceItemsPromise = null;
 
     const loadPriceItems = () => {
-        return new Promise((resolve) => {
-            if (cachedPriceItems) { resolve(cachedPriceItems); return; }
+        if (cachedPriceItems) return Promise.resolve(cachedPriceItems);
+        if (_loadPriceItemsPromise) return _loadPriceItemsPromise;
+        _loadPriceItemsPromise = new Promise((resolve) => {
             const request = indexedDB.open("futSBCDatabase", 2);
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains("priceItems")) {
+                    db.createObjectStore("priceItems", { keyPath: "id" });
+                }
+            };
             request.onsuccess = (event) => {
                 const db = event.target.result;
+                if (!db.objectStoreNames.contains("priceItems")) {
+                    cachedPriceItems = {};
+                    _loadPriceItemsPromise = null;
+                    resolve({});
+                    return;
+                }
                 const tx = db.transaction(["priceItems"], "readonly");
                 const store = tx.objectStore("priceItems");
                 const get = store.get("allPriceItems");
                 get.onsuccess = (e) => {
                     cachedPriceItems = (e.target.result && e.target.result.data) ? e.target.result.data : {};
+                    _loadPriceItemsPromise = null;
                     resolve(cachedPriceItems);
                 };
-                get.onerror = () => { cachedPriceItems = {}; resolve({}); };
+                get.onerror = () => { cachedPriceItems = {}; _loadPriceItemsPromise = null; resolve({}); };
             };
-            request.onerror = () => { cachedPriceItems = {}; resolve({}); };
+            request.onerror = () => { cachedPriceItems = {}; _loadPriceItemsPromise = null; resolve({}); };
         });
+        return _loadPriceItemsPromise;
     };
 
     const getPrice = (item) => {
@@ -464,6 +482,7 @@ GM_addStyle(`
             };
             request.onsuccess = (event) => {
                 const db = event.target.result;
+                if (!db.objectStoreNames.contains("priceItems")) { resolve(); return; }
                 const tx = db.transaction(["priceItems"], "readwrite");
                 const store = tx.objectStore("priceItems");
                 store.put({ id: "allPriceItems", data: cachedPriceItems });
@@ -531,10 +550,9 @@ GM_addStyle(`
     });
 
     const fetchAndCachePrices = async (players, onProgress, force = false) => {
-        const idsArray = players
+        const idsArray = [...new Set(players
             .filter((f) => (force || isPriceOld(f)) && f?.isPlayer?.())
-            .map((p) => p.definitionId);
-
+            .map((p) => p.definitionId))];
         if (idsArray.length === 0) return;
 
         const platform = getUserPlatform();
@@ -625,6 +643,9 @@ GM_addStyle(`
             await Promise.race(activeRequests);
             launchNext();
         }
+        const total = Object.keys(cachedPriceItems || {}).length;
+        const cbrCount = Object.keys(cachedPriceItems || {}).filter(k => k.endsWith("_CBR")).length;
+        console.log(`[NoBrainSBC] 已获取 ${idsArray.length} 个球员价格，目前共有 ${total - cbrCount} 个球员价格（另有 ${cbrCount} 条CBR）`);
     };
 
     // ─── 共享设置 / Shared Settings ───────────────────────────────────────────────
@@ -906,6 +927,10 @@ GM_addStyle(`
                 <div class="aisbc-tab-panel" data-panel="ui">
                     ${makeToggleRows(UI_TOGGLES)}
                     ${textRows}
+                    <div class="aisbc-settings-row">
+                        <label></label>
+                        <button class="btn-standard mini" id="aisbc-clear-price-cache"><span class="button__text">${L("btn.clearPriceCache")}</span></button>
+                    </div>
                 </div>
                 <div class="aisbc-settings-footer">
                     <button class="btn-standard mini" id="aisbc-settings-reset"><span class="button__text">${L("settings.reset")}</span></button>
@@ -939,6 +964,27 @@ GM_addStyle(`
             saveOwnSettings({ ...SETTINGS_DEFAULTS, excludePlayerIds: excluded });
             overlay.remove();
             showNotification(L("settings.resetDone"), UINotificationType.POSITIVE);
+        });
+
+        overlay.querySelector("#aisbc-clear-price-cache").addEventListener("click", (e) => {
+            cachedPriceItems = null;
+            _loadPriceItemsPromise = null;
+            const req = indexedDB.open("futSBCDatabase", 2);
+            req.onupgradeneeded = ev => {
+                const db = ev.target.result;
+                if (!db.objectStoreNames.contains("priceItems")) {
+                    db.createObjectStore("priceItems", { keyPath: "id" });
+                }
+            };
+            req.onsuccess = ev => {
+                const db = ev.target.result;
+                if (!db.objectStoreNames.contains("priceItems")) return;
+                const tx = db.transaction(["priceItems"], "readwrite");
+                tx.objectStore("priceItems").delete("allPriceItems");
+            };
+            const btn = e.currentTarget.querySelector(".button__text");
+            btn.textContent = L("btn.clearPriceCacheDone");
+            setTimeout(() => { btn.textContent = L("btn.clearPriceCache"); }, 1500);
         });
 
         document.body.appendChild(overlay);
@@ -2328,13 +2374,105 @@ GM_addStyle(`
         const result = UTPlayerItemView_renderItem.call(this, item, t);
         const root = this.__root;
         if (root) {
-            setTimeout(() => {
+            setTimeout(async () => {
                 if (!root) return;
+                if (!cachedPriceItems) await loadPriceItems();
                 const el = getPriceDiv(item);
-                if (el) root.prepend(el);
+                if (el) {
+                    root.querySelector(".aisbc-price-label")?.remove();
+                    root.prepend(el);
+                }
                 root.classList.toggle("locked", isItemLocked(item));
             }, 0);
         }
+        return result;
+    };
+
+    // ─── 列表渲染时自动取价 / Auto-fetch prices on list render ────────────────────
+    let _autoFetchTimer = null;
+    const _autoFetchPlayers = (listView) => {
+        const players = (listView.listRows || [])
+            .map(row => row.data)
+            .filter(item => item?.isPlayer?.() && isPriceOld(item));
+        if (players.length === 0) return;
+        clearTimeout(_autoFetchTimer);
+        _autoFetchTimer = setTimeout(async () => {
+            await loadPriceItems();
+            await fetchAndCachePrices(players);
+            // 取价完成后，找球员卡片 DOM 刷新价格标签
+            // After fetch, find player card DOM elements and refresh price labels
+            (listView.listRows || []).forEach(row => {
+                const item = row.data;
+                if (!item?.isPlayer?.()) return;
+                const cardView = row.itemComponent || row;
+                const root = cardView.__root;
+                if (!root) return;
+                root.querySelector(".aisbc-price-label")?.remove();
+                const el = getPriceDiv(item);
+                if (el) root.prepend(el);
+            });
+        }, 300);
+    };
+
+    const _origRenderItems = UTPaginatedItemListView.prototype.renderItems;
+    UTPaginatedItemListView.prototype.renderItems = function (t) {
+        const result = _origRenderItems.call(this, t);
+        _autoFetchPlayers(this);
+        return result;
+    };
+
+    const _origRenderSection = UTUnassignedItemsView.prototype.renderSection;
+    let _pendingSectionPlayers = [];
+    UTUnassignedItemsView.prototype.renderSection = function (items, t, i) {
+        const result = _origRenderSection.call(this, items, t, i);
+        const players = (items || []).filter(item => item?.isPlayer?.() && isPriceOld(item));
+        if (players.length === 0) return result;
+        _pendingSectionPlayers.push(...players);
+        const viewRef = this;
+        clearTimeout(_autoFetchTimer);
+        _autoFetchTimer = setTimeout(async () => {
+            const toFetch = _pendingSectionPlayers.splice(0);
+            await loadPriceItems();
+            await fetchAndCachePrices(toFetch);
+            (viewRef.sections || []).forEach(section => {
+                (section?.listRows || []).forEach(row => {
+                    if (!row.data?.isPlayer?.()) return;
+                    const cardView = row.itemComponent || row._view
+                        || (row.childViews || []).find(v => v instanceof UTPlayerItemView);
+                    const root = cardView?.__root;
+                    if (!root) return;
+                    root.querySelector(".aisbc-price-label")?.remove();
+                    const el = getPriceDiv(row.data);
+                    if (el) root.prepend(el);
+                });
+            });
+        }, 300);
+        return result;
+    };
+
+    const _origSetCarouselItems = UTPlayerPicksView.prototype.setCarouselItems;
+    UTPlayerPicksView.prototype.setCarouselItems = function (e) {
+        const result = _origSetCarouselItems.call(this, e);
+        const players = (e || []).filter(item => item?.isPlayer?.());
+        if (players.length === 0) return result;
+        const viewRef = this;
+        setTimeout(async () => {
+            await loadPriceItems();
+            const toFetch = players.filter(isPriceOld);
+            if (toFetch.length > 0) await fetchAndCachePrices(toFetch);
+            const containers = Array.from(
+                viewRef._carouselItemsContainer?.__carouselItemsContainer?.children || []
+            );
+            (e || []).forEach((item, idx) => {
+                if (!item?.isPlayer?.()) return;
+                const container = containers[idx];
+                if (!container) return;
+                const cardRoot = container.querySelector(".ut-item") || container;
+                cardRoot.querySelector(".aisbc-price-label")?.remove();
+                const el = getPriceDiv(item);
+                if (el) cardRoot.prepend(el);
+            });
+        }, 500);
         return result;
     };
 
