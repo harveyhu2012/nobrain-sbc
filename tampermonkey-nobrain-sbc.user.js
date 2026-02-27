@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.27
+// @version      0.28
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       Harvey Hu
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -266,6 +266,7 @@ GM_addStyle(`
         "param.ilsNoImproveLimit":      ["ILS无改善上限", "ILS No-Improve Limit"],
         "param.maxPriceIncrements":     ["购买最大加价步数", "Max Price Increment Steps"],
         "param.showPrices":             ["显示球员价格", "Show Player Prices"],
+        "param.priceExpiry":            ["价格缓存时间（分钟）", "Price Cache Duration (min)"],
         "param.apiProxy":               ["自定义 API 代理（留空使用内置随机代理）", "Custom API Proxy (leave blank for built-in)"],
         "btn.clearPriceCache":          ["清空价格缓存", "Clear Price Cache"],
         "btn.clearPriceCacheDone":      ["已清空", "Cleared"],
@@ -535,7 +536,8 @@ GM_addStyle(`
 
     const isPriceOld = (item) => {
         if (!cachedPriceItems || !(item?.definitionId in cachedPriceItems)) return true;
-        const FRESH_MS = 60 * 60 * 1000; // 1小时有效期 / 1 hour
+        const expiryMin = Number(getOwnSettings().priceExpiry ?? SETTINGS_DEFAULTS.priceExpiry) || 60;
+        const FRESH_MS = expiryMin * 60 * 1000;
         const timeStamp = new Date(cachedPriceItems[item.definitionId]?.timeStamp);
         if (!timeStamp.getTime()) return true;
         return (timeStamp.getTime() + FRESH_MS) < Date.now();
@@ -826,6 +828,7 @@ GM_addStyle(`
         innerRestarts: 6,
         ilsNoImproveLimit: 15,
         maxPriceIncrements: 1,
+        priceExpiry: 60,
         apiProxy: "",
     };
 
@@ -876,11 +879,14 @@ GM_addStyle(`
         const UI_TOGGLES = [
             ["showPrices", L("param.showPrices")],
         ];
+        const UI_NUMBERS = [
+            ["priceExpiry", L("param.priceExpiry"), 1, 1440],
+        ];
         const TEXTS = [
             ["apiProxy", L("param.apiProxy")],
         ];
         const TOGGLES = [...EXCLUDE_TOGGLES, ...UI_TOGGLES];
-        const NUMBERS = ALGO_NUMBERS;
+        const NUMBERS = [...ALGO_NUMBERS, ...UI_NUMBERS];
 
         const makeToggleRows = (list) => list.map(([key, label]) => `
             <div class="aisbc-settings-row">
@@ -923,6 +929,7 @@ GM_addStyle(`
                     <div style="height:280px;flex-shrink:0;"></div>
                 </div>
                 <div class="aisbc-tab-panel" data-panel="ui">
+                    ${makeNumberRows(UI_NUMBERS)}
                     ${makeToggleRows(UI_TOGGLES)}
                     ${textRows}
                     <div class="aisbc-settings-row">
