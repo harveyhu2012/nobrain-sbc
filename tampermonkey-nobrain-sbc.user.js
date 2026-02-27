@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.26
+// @version      0.27
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       Harvey Hu
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -2383,15 +2383,16 @@ GM_addStyle(`
     UTPlayerItemView.prototype.renderItem = function (item, t) {
         const result = UTPlayerItemView_renderItem.call(this, item, t);
         const root = this.__root;
-        if (root) {
+        if (!root) return result;
+        if (cachedPriceItems) {
+            const el = getPriceDiv(item);
+            if (el) { root.querySelector(".aisbc-price-label")?.remove(); root.prepend(el); }
+            root.classList.toggle("locked", isItemLocked(item));
+        } else {
             setTimeout(async () => {
-                if (!root) return;
-                if (!cachedPriceItems) await loadPriceItems();
+                await loadPriceItems();
                 const el = getPriceDiv(item);
-                if (el) {
-                    root.querySelector(".aisbc-price-label")?.remove();
-                    root.prepend(el);
-                }
+                if (el) { root.querySelector(".aisbc-price-label")?.remove(); root.prepend(el); }
                 root.classList.toggle("locked", isItemLocked(item));
             }, 0);
         }
