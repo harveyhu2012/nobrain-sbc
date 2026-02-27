@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.22
+// @version      0.23
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       Harvey Hu
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -1487,10 +1487,7 @@ GM_addStyle(`
             label.className = "aisbc-price-label";
             const p = entry.price;
             label.textContent = p.toLocaleString();
-            const cbrEntry = cachedPriceItems[item.rating + "_CBR"];
-            const cbrPrice = cbrEntry?.price || 0;
-            const minPrice = Math.max(cbrPrice, item?._itemPriceLimits?.minimum || 0);
-            if (!entry.isExtinct && !entry.isObjective && minPrice > 0 && p <= minPrice * 1.1) {
+            if (!entry.isExtinct && !entry.isObjective && isFodder(item)) {
                 label.style.background = "#00a651";
                 label.style.color = "#fff";
                 label.style.border = "1px solid #4cdb85";
@@ -2227,10 +2224,13 @@ GM_addStyle(`
         if (cachedPriceItems[item.definitionId]?.isExtinct || cachedPriceItems[item.definitionId]?.isObjective) return false;
         const price = cachedPriceItems[item.definitionId]?.price;
         if (!price) return false;
-        const fodderPrice = Math.max(
-            cachedPriceItems[item.rating + "_CBR"]?.price || 0,
-            item?._itemPriceLimits?.minimum || 0
-        );
+        const cbrPrice = cachedPriceItems[item.rating + "_CBR"]?.price || 0;
+        let fodderPrice = cbrPrice;
+        if (item.rareflag === 1) {
+            // 稀有球员按评分段设定最低 fodder 基准 / Rare cards: rating-based floor
+            const rareFloor = item.rating >= 88 ? 900 : item.rating >= 82 ? 700 : item.rating >= 75 ? 650 : 0;
+            fodderPrice = Math.max(cbrPrice, rareFloor);
+        }
         return fodderPrice > 0 && price <= fodderPrice * 1.1;
     };
 
@@ -2240,8 +2240,13 @@ GM_addStyle(`
         const price = cachedPriceItems[item.definitionId]?.price;
         if (!price) return false;
         const cbrPrice = cachedPriceItems[item.rating + "_CBR"]?.price || 0;
-        const minPrice = item?._itemPriceLimits?.minimum || 0;
-        return cbrPrice > 0 && price >= cbrPrice * 2 && price >= minPrice * 2;
+        let basePrice = cbrPrice;
+        if (item.rareflag === 1) {
+            // 稀有球员按评分段设定基准，与 isFodder 一致 / Rare cards: same rating-based floor as isFodder
+            const rareFloor = item.rating >= 88 ? 900 : item.rating >= 82 ? 700 : item.rating >= 75 ? 650 : 0;
+            basePrice = Math.max(cbrPrice, rareFloor);
+        }
+        return basePrice > 0 && price >= basePrice * 2;
     };
 
     const getPriceDiv = (item) => {
