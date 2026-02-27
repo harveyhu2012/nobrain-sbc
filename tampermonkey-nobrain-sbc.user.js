@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.25
+// @version      0.26
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       Harvey Hu
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -290,6 +290,7 @@ GM_addStyle(`
         "buy.error":                    ["出错", "Error"],
         "buy.nextIn":                   ["下一个", "Next in"],
         "buy.closingIn":                ["即将关闭", "Closing soon"],
+        "buy.closeToStop":              ["关闭窗口即停止购买", "Close window to stop"],
         "notify.noConcepts":            ["阵容中无虚拟球员", "No concept players in squad"],
         "notify.noCachedPrice":         ["无缓存价格", "No cached price"],
         "notify.noActiveListing":       ["无活跃挂牌", "No active listing"],
@@ -643,9 +644,6 @@ GM_addStyle(`
             await Promise.race(activeRequests);
             launchNext();
         }
-        const total = Object.keys(cachedPriceItems || {}).length;
-        const cbrCount = Object.keys(cachedPriceItems || {}).filter(k => k.endsWith("_CBR")).length;
-        console.log(`[NoBrainSBC] 已获取 ${idsArray.length} 个球员价格，目前共有 ${total - cbrCount} 个球员价格（另有 ${cbrCount} 条CBR）`);
     };
 
     // ─── 共享设置 / Shared Settings ───────────────────────────────────────────────
@@ -2187,6 +2185,10 @@ GM_addStyle(`
             titleBlock.textContent = L("buy.title");
             titleBlock.className = "nobrain-buy-title";
             statusContent.appendChild(titleBlock);
+            const hintBlock = document.createElement("div");
+            hintBlock.textContent = L("buy.closeToStop");
+            hintBlock.style.cssText = "font-size:0.75rem;opacity:0.6;margin-bottom:0.35rem;text-align:center;";
+            statusContent.appendChild(hintBlock);
 
             const conceptItems = getConceptsInSquad();
             if (!conceptItems.length) {
@@ -2197,6 +2199,7 @@ GM_addStyle(`
                 return;
             }
 
+            _buyAborted = false;
             let successCount = 0;
             try {
                 const headerRow = document.createElement("div");
@@ -2226,6 +2229,7 @@ GM_addStyle(`
                 statusContent.scrollTop = statusContent.scrollHeight;
 
                 for (let i = 0; i < rowData.length; i++) {
+                    if (_buyAborted) break;
                     const { conceptItem, expectedLabel, statusSpan } = rowData[i];
                     statusSpan.textContent = L("buy.buying");
                     statusSpan.style.color = "";
@@ -2259,10 +2263,13 @@ GM_addStyle(`
                         statusSpan.textContent = reasonLabel;
                     }
 
-                    if (i < rowData.length - 1) {
+                    if (i < rowData.length - 1 && !_buyAborted) {
                         const delay = 2000 + Math.floor(Math.random() * 3000);
-                        statusFooter.textContent = `${L("buy.nextIn")} ${(delay / 1000).toFixed(1)}s`;
-                        await new Promise((r) => setTimeout(r, delay));
+                        const end = Date.now() + delay;
+                        while (Date.now() < end && !_buyAborted) {
+                            statusFooter.textContent = `${L("buy.nextIn")} ${((end - Date.now()) / 1000).toFixed(1)}s`;
+                            await new Promise((r) => setTimeout(r, Math.min(200, end - Date.now())));
+                        }
                         statusFooter.textContent = "";
                     } else {
                         statusFooter.textContent = "";
@@ -2277,8 +2284,11 @@ GM_addStyle(`
                 console.error("[NoBrainSBC] Buy squad error", err);
                 showNotification(L("notify.buyEncounterError"), UINotificationType.NEGATIVE);
             } finally {
-                statusFooter.textContent = L("buy.closingIn");
-                await new Promise((r) => setTimeout(r, 5000));
+                if (!_buyAborted) {
+                    statusFooter.textContent = L("buy.closingIn");
+                    await new Promise((r) => setTimeout(r, 5000));
+                }
+                _buyAborted = false;
                 statusContainer.style.display = "none";
                 statusContent.innerHTML = "";
                 statusFooter.textContent = "";
@@ -2856,6 +2866,8 @@ GM_addStyle(`
         }
     };
 
+    let _buyAborted = false;
+
     const getOrCreateBuyStatusPanel = () => {
         const panelId = "nobrain-buy-squad-status";
         let container = document.getElementById(panelId);
@@ -2869,7 +2881,7 @@ GM_addStyle(`
             closeBtn.textContent = "×";
             closeBtn.setAttribute("aria-label", L("misc.closePanel"));
             closeBtn.className = "nobrain-panel-close";
-            closeBtn.addEventListener("click", () => { container.style.display = "none"; });
+            closeBtn.addEventListener("click", () => { _buyAborted = true; container.style.display = "none"; });
 
             const content = document.createElement("div");
             content.className = "nobrain-buy-content";
