@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.29
+// @version      0.30
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       Harvey Hu
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -233,6 +233,41 @@ GM_addStyle(`
         gap: 0.5rem;
         align-items: center;
     }
+    .aisbc-league-hint {
+        font-size: 0.75rem;
+        opacity: 0.7;
+        margin-bottom: 6px;
+    }
+    .aisbc-league-header {
+        display: flex;
+        gap: 4px;
+        font-size: 0.7rem;
+        opacity: 0.6;
+        margin-bottom: 4px;
+        margin-top: 8px;
+    }
+    .aisbc-league-header-col1 { flex: 2; }
+    .aisbc-league-header-col2,
+    .aisbc-league-header-col3 { width: 44px; text-align: center; }
+    .aisbc-league-header-col4 { width: 22px; }
+    .aisbc-penalty-row {
+        display: flex;
+        gap: 4px;
+        align-items: center;
+        margin-bottom: 4px;
+    }
+    .aisbc-penalty-row select {
+        flex: 2;
+        font-size: 12px;
+        height: 24px;
+    }
+    .aisbc-penalty-row input {
+        width: 44px;
+        height: 20px;
+    }
+    .aisbc-add-penalty-btn {
+        margin-top: 6px;
+    }
 `);
 
 (function () {
@@ -268,6 +303,13 @@ GM_addStyle(`
         "param.showPrices":             ["显示球员价格", "Show Player Prices"],
         "param.priceExpiry":            ["价格缓存时间（分钟）", "Price Cache Duration (min)"],
         "param.apiProxy":               ["自定义 API 代理（留空使用内置随机代理）", "Custom API Proxy (leave blank for built-in)"],
+        "settings.tabLeague":           ["联赛筛选", "League Filter"],
+        "param.leaguePenalty.hint":     ["指定联赛球员的价格乘以系数，求解器会尽量避免使用，但必要时仍可使用。", "Multiply price of players from specified leagues. Solver avoids them but can still use them."],
+        "param.leaguePenalty.add":      ["+ 添加", "+ Add"],
+        "param.leaguePenalty.league":   ["联赛", "League"],
+        "param.leaguePenalty.minRating":["最低分", "Min"],
+        "param.leaguePenalty.maxRating":["最高分", "Max"],
+        "param.leaguePenaltyMult":      ["价格系数 (%)", "Price Multiplier (%)"],
         "btn.clearPriceCache":          ["清空价格缓存", "Clear Price Cache"],
         "btn.clearPriceCacheDone":      ["已清空", "Cleared"],
         "param.excludePlayers":         ["排除 - 球员", "EXCLUDE - Players"],
@@ -821,7 +863,7 @@ GM_addStyle(`
         excludeTradable: false,
         excludeExtinct: true,
         showPrices: true,
-        duplicateDiscount: 50,
+        duplicateDiscount: 70,
         untradeableDiscount: 80,
         nobrainConceptPremium: 500,
         hillClimbMaxIter: 5000,
@@ -830,6 +872,24 @@ GM_addStyle(`
         maxPriceIncrements: 1,
         priceExpiry: 60,
         apiProxy: "",
+        leaguePenalties: [
+            {leagueId: 13, minRating: 77, maxRating: 82},
+            {leagueId: 53, minRating: 77, maxRating: 82},
+            {leagueId: 19, minRating: 65, maxRating: 82},
+            {leagueId: 31, minRating: 65, maxRating: 82},
+            {leagueId: 16, minRating: 1, maxRating: 82},
+            {leagueId: 39, minRating: 61, maxRating: 82},
+            {leagueId: 14, minRating: 61, maxRating: 82},
+            {leagueId: 20, minRating: 1, maxRating: 82},
+            {leagueId: 17, minRating: 1, maxRating: 82},
+            {leagueId: 54, minRating: 1, maxRating: 82},
+            {leagueId: 32, minRating: 1, maxRating: 82},
+            {leagueId: 308, minRating: 1, maxRating: 83},
+            {leagueId: 4, minRating: 1, maxRating: 83},
+            {leagueId: 350, minRating: 1, maxRating: 74},
+            {leagueId: 330, minRating: 1, maxRating: 74},
+        ],
+        leaguePenaltyMult: 200,
     };
 
     const getOwnSettings = () => {
@@ -916,6 +976,7 @@ GM_addStyle(`
                     <button class="aisbc-tab active" data-tab="algo">${L("settings.algo")}</button>
                     <button class="aisbc-tab" data-tab="exclude">${L("settings.exclude")}</button>
                     <button class="aisbc-tab" data-tab="players">${L("settings.tabPlayers")}</button>
+                    <button class="aisbc-tab" data-tab="league">${L("settings.tabLeague")}</button>
                     <button class="aisbc-tab" data-tab="ui">${L("settings.ui")}</button>
                 </div>
                 <div class="aisbc-tab-panel active" data-panel="algo">
@@ -927,6 +988,21 @@ GM_addStyle(`
                 <div class="aisbc-tab-panel" data-panel="players">
                     <div id="aisbc-exclude-players-anchor"></div>
                     <div style="height:280px;flex-shrink:0;"></div>
+                </div>
+                <div class="aisbc-tab-panel" data-panel="league">
+                    <div class="aisbc-league-hint">${L("param.leaguePenalty.hint")}</div>
+                    <div class="aisbc-settings-row">
+                        <label>${L("param.leaguePenaltyMult")}</label>
+                        <input type="number" id="aisbc-leaguePenaltyMult" value="${current.leaguePenaltyMult || 200}" min="100" max="10000">
+                    </div>
+                    <div class="aisbc-league-header">
+                        <span class="aisbc-league-header-col1">${L("param.leaguePenalty.league")}</span>
+                        <span class="aisbc-league-header-col2">${L("param.leaguePenalty.minRating")}</span>
+                        <span class="aisbc-league-header-col3">${L("param.leaguePenalty.maxRating")}</span>
+                        <span class="aisbc-league-header-col4"></span>
+                    </div>
+                    <div id="aisbc-league-penalties"></div>
+                    <button class="btn-standard mini aisbc-add-penalty-btn" id="aisbc-add-penalty"><span class="button__text">${L("param.leaguePenalty.add")}</span></button>
                 </div>
                 <div class="aisbc-tab-panel" data-panel="ui">
                     ${makeNumberRows(UI_NUMBERS)}
@@ -948,6 +1024,36 @@ GM_addStyle(`
             if (e.target === overlay) overlay.remove();
         });
         overlay.querySelector("#aisbc-settings-close").addEventListener("click", () => overlay.remove());
+
+        // 联赛筛选面板逻辑 / League penalty panel logic
+        const leagueList = (typeof factories !== "undefined" && factories.DataProvider?.getLeagueDP)
+            ? factories.DataProvider.getLeagueDP(true).filter(l => l.id !== -1).map(l => ({ id: l.id, name: l.label || l.name || String(l.id) }))
+            : Object.entries(KNOWN_LEAGUES).map(([id, name]) => ({ id: Number(id), name }));
+        const getUsedLeagueIds = () => [...penaltiesContainer.querySelectorAll(".aisbc-penalty-row select")].map(s => Number(s.value));
+        const makePenaltyRow = (pen = {}) => {
+            const row = document.createElement("div");
+            row.className = "aisbc-penalty-row";
+            const usedIds = getUsedLeagueIds();
+            const options = leagueList.filter(l => l.id === pen.leagueId || !usedIds.includes(l.id)).map(l => `<option value="${l.id}">${l.name}(${l.id})</option>`).join("");
+            row.innerHTML = `<select>${options}</select><input type="number" placeholder="${L("param.leaguePenalty.minRating")}" min="1" max="99" value="${pen.minRating??1}"><input type="number" placeholder="${L("param.leaguePenalty.maxRating")}" min="1" max="99" value="${pen.maxRating??99}"><button class="btn-standard mini penalty-del" style="padding:0 6px;"><span class="button__text">×</span></button>`;
+            if (pen.leagueId) row.querySelector("select").value = pen.leagueId;
+            row.querySelector(".penalty-del").addEventListener("click", () => { row.remove(); updatePenaltySelects(); });
+            row.querySelector("select").addEventListener("change", updatePenaltySelects);
+            return row;
+        };
+        const updatePenaltySelects = () => {
+            const usedIds = getUsedLeagueIds();
+            penaltiesContainer.querySelectorAll(".aisbc-penalty-row").forEach(row => {
+                const sel = row.querySelector("select");
+                const currentId = Number(sel.value);
+                sel.innerHTML = leagueList.filter(l => l.id === currentId || !usedIds.includes(l.id)).map(l => `<option value="${l.id}">${l.name}(${l.id})</option>`).join("");
+                sel.value = currentId;
+            });
+        };
+        const penaltiesContainer = overlay.querySelector("#aisbc-league-penalties");
+        (current.leaguePenalties || []).forEach(pen => penaltiesContainer.appendChild(makePenaltyRow(pen)));
+        overlay.querySelector("#aisbc-add-penalty").addEventListener("click", () => penaltiesContainer.appendChild(makePenaltyRow()));
+
         overlay.querySelector("#aisbc-settings-save").addEventListener("click", () => {
             const result = {};
             TOGGLES.forEach(([key]) => {
@@ -959,6 +1065,11 @@ GM_addStyle(`
             TEXTS.forEach(([key]) => {
                 result[key] = overlay.querySelector(`#aisbc-${key}`).value.trim();
             });
+            result.leaguePenalties = [...penaltiesContainer.querySelectorAll(".aisbc-penalty-row")].map(row => {
+                const inputs = row.querySelectorAll("input");
+                return { leagueId: Number(row.querySelector("select").value), minRating: Number(inputs[0].value), maxRating: Number(inputs[1].value) };
+            });
+            result.leaguePenaltyMult = Number(overlay.querySelector("#aisbc-leaguePenaltyMult").value);
             saveOwnSettings(result);
             overlay.remove();
             showNotification(L("settings.saved"), UINotificationType.POSITIVE);
@@ -1288,6 +1399,17 @@ GM_addStyle(`
             if (!p || p.isFixed) return total;
             return total + (p.price || 15000000);
         }, 0);
+    };
+
+    const KNOWN_LEAGUES = {13:"英超",53:"西甲",31:"意甲",19:"德甲",16:"法甲",308:"葡超",17:"法乙",14:"英冠",32:"意乙",20:"德乙",54:"西乙",61:"英乙",68:"土超",50:"苏超",39:"美职联",2012:"中超",2118:"传奇",353:"阿甲"};
+
+    const applyLeaguePenalties = (players, penalties) => {
+        if (!penalties?.length) return players;
+        return players.map(p => {
+            const pen = penalties.find(r => r.leagueId === p.leagueId && p.rating >= r.minRating && p.rating <= r.maxRating);
+            if (!pen) return p;
+            return { ...p, price: Math.round(p.price * pen.multiplier / 100) };
+        });
     };
 
     // ─── 按全队约束预过滤球员池 / Pre-filter player pool by "all 11" constraints ──
@@ -1875,6 +1997,18 @@ GM_addStyle(`
                 }
             }
 
+
+            // 应用联赛价格惩罚 / Apply league price penalties
+            {
+                const penalties = getOwnSettings().leaguePenalties || [];
+                const penaltyMult = getOwnSettings().leaguePenaltyMult || 200;
+                if (penalties.length) {
+                    for (let i = 0; i < players.length; i++) {
+                        const pen = penalties.find(r => r.leagueId === players[i].leagueId && players[i].rating >= r.minRating && players[i].rating <= r.maxRating);
+                        if (pen) players[i] = { ...players[i], price: Math.round(players[i].price * penaltyMult / 100) };
+                    }
+                }
+            }
 
             let bestResult = { feasible: false, cost: Infinity };
             let bestCappedPlayers = players;
