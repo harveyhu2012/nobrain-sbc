@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.31
+// @version      0.32
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       Harvey Hu
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -1903,7 +1903,7 @@ GM_addStyle(`
                 .filter(item => item.loans < 0)
                 .filter(item => !item.isTimeLimited())
                 .filter(item => !activeSquadPlayerIds.has(item.id))
-                .filter(item => !(item.isSpecial && item.isSpecial() && excludeSpecial && item.rareflag !== 3))
+                .filter(item => !(item.isSpecial && item.isSpecial() && excludeSpecial && item.rareflag !== 3 && !(item.duplicateId > 0 || item.isStorage)))
                 .filter(item => !(item.isTradeable && item.isTradeable() && excludeTradable))
                 .filter(item => !(cachedPriceItems[item.definitionId]?.isSbc && excludeSbc))
                 .filter(item => !(cachedPriceItems[item.definitionId]?.isObjective && excludeObjective))
@@ -1916,6 +1916,10 @@ GM_addStyle(`
                     let price = rawPrice != null ? Math.max(rawPrice, cbrPrice, 100) : cbrPrice;
                     price = price - (100 - item.rating);
                     if (item.duplicateId > 0 || item.isStorage) {
+                        // 重复特殊球员视为普通稀有金卡，价格设为CBR / Duplicate special cards treated as normal rares, priced at CBR
+                        if (item.isSpecial && item.isSpecial() && item.rareflag !== 3) {
+                            price = cbrPrice;
+                        }
                         price = price * duplicateDiscount / 100;
                     }
                     if (item.isTradeable && !item.isTradeable()) {
