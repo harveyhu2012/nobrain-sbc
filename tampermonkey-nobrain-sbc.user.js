@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.32
+// @version      0.33
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       Harvey Hu
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -142,9 +142,10 @@ GM_addStyle(`
     .ms-dd { display:none; position:absolute; z-index:9999; left:0; right:0; top:100%; max-height:260px; overflow-y:auto; background:#fff; border:1px solid #bbb; border-top:none; border-radius:0 0 3px 3px; }
     .ms-wrap.ms-open .ms-dd { display:block; }
     .ms-search { display:block; width:100%; padding:6px 8px; border:none; border-bottom:1px solid #ddd; outline:none; font-size:13px; box-sizing:border-box; }
-    .ms-opt { display:flex; align-items:center; gap:6px; padding:6px 10px; cursor:pointer; font-size:13px; }
+    .ms-opt { display:flex; align-items:center; gap:6px; padding:6px 10px; font-size:13px; }
     .ms-opt:hover { background:#f2f2f2; }
     .ms-opt.ms-selected { background:#e8e8e8; }
+    .ms-cb { width:16px; height:16px; flex-shrink:0; cursor:pointer; }
     .ms-opt img { width:24px; height:24px; border-radius:2px; }
     .ms-empty { padding:8px 10px; color:#999; font-size:13px; }
     .aisbc-exclude-section { margin-top:16px; }
@@ -246,7 +247,7 @@ GM_addStyle(`
         margin-bottom: 4px;
         margin-top: 8px;
     }
-    .aisbc-league-header-col1 { flex: 2; }
+    .aisbc-league-header-col1 { flex: 1; min-width: 0; }
     .aisbc-league-header-col2,
     .aisbc-league-header-col3 { width: 44px; text-align: center; }
     .aisbc-league-header-col4 { width: 22px; }
@@ -257,7 +258,8 @@ GM_addStyle(`
         margin-bottom: 4px;
     }
     .aisbc-penalty-row select {
-        flex: 2;
+        flex: 1;
+        min-width: 0;
         font-size: 12px;
         height: 24px;
     }
@@ -786,16 +788,19 @@ GM_addStyle(`
                 const el = document.createElement("div");
                 el.className = "ms-opt" + (selected.has(String(opt.value)) ? " ms-selected" : "");
                 const icon = (opt.customProperties && opt.customProperties.icon) || "";
-                el.innerHTML = icon + " " + opt.label;
-                const selectOpt = (e) => {
+                const cb = document.createElement("input");
+                cb.type = "checkbox";
+                cb.className = "ms-cb";
+                cb.checked = selected.has(String(opt.value));
+                cb.addEventListener("change", (e) => {
                     e.stopPropagation();
-                    e.preventDefault();
                     const v = String(opt.value);
                     selected.has(v) ? selected.delete(v) : selected.add(v);
                     persist();
-                };
-                el.addEventListener("click", selectOpt);
-                el.addEventListener("touchend", selectOpt);
+                });
+                cb.addEventListener("touchend", (e) => e.stopPropagation());
+                el.appendChild(cb);
+                el.insertAdjacentHTML("beforeend", icon + " " + opt.label);
                 listEl.appendChild(el);
             });
             if (count === 0) {
