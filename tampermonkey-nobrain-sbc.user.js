@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.30
+// @version      0.31
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       Harvey Hu
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -2436,6 +2436,13 @@ GM_addStyle(`
                 delete buyBtn.dataset.running;
                 buyBtn.removeAttribute("disabled");
                 buyBtn.classList.remove("disabled");
+
+                // 手机端返回阵容界面 / Return to squad view on mobile
+                if (successCount > 0 && isPhone() && cntlr.current()?.className === "UTSBCSquadDetailPanelViewController") {
+                    setTimeout(() => {
+                        cntlr.current().parentViewController._eBackButtonTapped();
+                    }, 500);
+                }
             }
         });
         buyBtn.style.flex = "1";
@@ -3043,7 +3050,7 @@ GM_addStyle(`
         const controller = cntlr.current();
         const _squad = controller?._squad || controller?._challenge?.squad;
         const squadPlayers = Array.isArray(_squad?._players) ? _squad._players : [];
-        return squadPlayers.map((slot) => slot?._item).filter((item) => item && item.concept);
+        return squadPlayers.slice(0, 11).map((slot) => slot?._item).filter((item) => item && item.concept);
     };
 
 })();
