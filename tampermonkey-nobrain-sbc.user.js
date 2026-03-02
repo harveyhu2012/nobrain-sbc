@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.33
+// @version      0.34
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       Harvey Hu
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -18,7 +18,7 @@ GM_addStyle(`
         top: 120px !important;
         bottom: auto !important;
     }
-    .aisbc-offline-progress {
+    .nobrain-offline-progress {
         position: absolute;
         bottom: 38%;
         left: 0;
@@ -28,7 +28,7 @@ GM_addStyle(`
         font-size: 13px;
         pointer-events: none;
     }
-    .aisbc-price-label {
+    .nobrain-price-label {
         position: absolute;
         font-size: 12px;
         width: auto !important;
@@ -44,12 +44,33 @@ GM_addStyle(`
         pointer-events: none;
         z-index: 2;
     }
-    .aisbc-price-label.precious {
+    .nobrain-price-label.precious {
         background: #ee2208;
         border: 1px solid #fd7254;
         color: #fff;
     }
-    .aisbc-settings-overlay {
+    .nobrain-price-label.extinct {
+        background: #666;
+        color: #fff;
+    }
+    .nobrain-price-label.sbc {
+        background: #8A6E2C;
+        color: #fff;
+    }
+    .nobrain-price-label.objective {
+        background: #4A90E2;
+        color: #fff;
+    }
+    .nobrain-price-label.sp {
+        background: #9B59B6;
+        color: #fff;
+    }
+    .nobrain-price-label.fodder {
+        background: #00a651;
+        color: #fff;
+        border: 1px solid #4cdb85;
+    }
+    .nobrain-settings-overlay {
         position: fixed;
         inset: 0;
         background: rgba(0,0,0,0.6);
@@ -58,7 +79,7 @@ GM_addStyle(`
         align-items: center;
         justify-content: center;
     }
-    .aisbc-settings-card {
+    .nobrain-settings-card {
         background: var(--ut-color-background-primary, #1a1a2e);
         color: var(--ut-color-text-primary, #fff);
         border-radius: 8px;
@@ -72,14 +93,14 @@ GM_addStyle(`
         flex-direction: column;
         box-shadow: 0 8px 32px rgba(0,0,0,0.5);
     }
-    .aisbc-tabs {
+    .nobrain-tabs {
         display: flex;
         gap: 4px;
         margin-bottom: 16px;
         border-bottom: 1px solid rgba(255,255,255,0.15);
         padding-bottom: 8px;
     }
-    .aisbc-tab {
+    .nobrain-tab {
         padding: 4px 12px;
         font-size: 12px;
         cursor: pointer;
@@ -89,18 +110,18 @@ GM_addStyle(`
         border: none;
         color: inherit;
     }
-    .aisbc-tab.active {
+    .nobrain-tab.active {
         opacity: 1;
         background: rgba(255,255,255,0.12);
     }
-    .aisbc-tab-panel { display: none; flex: 1; overflow-y: auto; min-height: 0; }
-    .aisbc-tab-panel.active { display: flex; flex-direction: column; }
-    .aisbc-settings-card h2 {
+    .nobrain-tab-panel { display: none; flex: 1; overflow-y: auto; min-height: 0; }
+    .nobrain-tab-panel.active { display: flex; flex-direction: column; }
+    .nobrain-settings-card h2 {
         margin: 0 0 16px;
         font-size: 16px;
         font-weight: bold;
     }
-    .aisbc-settings-card h3 {
+    .nobrain-settings-card h3 {
         margin: 16px 0 8px;
         font-size: 13px;
         font-weight: bold;
@@ -109,16 +130,16 @@ GM_addStyle(`
         border-bottom: 1px solid rgba(255,255,255,0.15);
         padding-bottom: 4px;
     }
-    .aisbc-settings-row {
+    .nobrain-settings-row {
         display: flex;
         align-items: center;
         justify-content: space-between;
         margin-bottom: 12px;
         font-size: 13px;
     }
-    .aisbc-settings-row label { flex: 1; }
-    .aisbc-settings-row .choicesLabel { font-size: 13px; }
-    .aisbc-settings-row input[type=number] {
+    .nobrain-settings-row label { flex: 1; }
+    .nobrain-settings-row .choicesLabel { font-size: 13px; }
+    .nobrain-settings-row input[type=number] {
         width: 70px;
         background: var(--ut-color-background-secondary, #2a2a3e);
         color: inherit;
@@ -127,7 +148,7 @@ GM_addStyle(`
         padding: 4px 6px;
         font-size: 13px;
     }
-    .aisbc-settings-footer {
+    .nobrain-settings-footer {
         display: flex;
         gap: 8px;
         margin-top: 20px;
@@ -148,8 +169,8 @@ GM_addStyle(`
     .ms-cb { width:16px; height:16px; flex-shrink:0; cursor:pointer; }
     .ms-opt img { width:24px; height:24px; border-radius:2px; }
     .ms-empty { padding:8px 10px; color:#999; font-size:13px; }
-    .aisbc-exclude-section { margin-top:16px; }
-    .aisbc-exclude-section h3 { font-size:13px; margin:0 0 8px; opacity:0.7; }
+    .nobrain-exclude-section { margin-top:16px; }
+    .nobrain-exclude-section h3 { font-size:13px; margin:0 0 8px; opacity:0.7; }
     .player.locked::before {
         font-family: 'UltimateTeam-Icons';
         position: absolute;
@@ -234,12 +255,12 @@ GM_addStyle(`
         gap: 0.5rem;
         align-items: center;
     }
-    .aisbc-league-hint {
+    .nobrain-league-hint {
         font-size: 0.75rem;
         opacity: 0.7;
         margin-bottom: 6px;
     }
-    .aisbc-league-header {
+    .nobrain-league-header {
         display: flex;
         gap: 4px;
         font-size: 0.7rem;
@@ -247,28 +268,64 @@ GM_addStyle(`
         margin-bottom: 4px;
         margin-top: 8px;
     }
-    .aisbc-league-header-col1 { flex: 1; min-width: 0; }
-    .aisbc-league-header-col2,
-    .aisbc-league-header-col3 { width: 44px; text-align: center; }
-    .aisbc-league-header-col4 { width: 22px; }
-    .aisbc-penalty-row {
+    .nobrain-league-header-col1 { flex: 1; min-width: 0; }
+    .nobrain-league-header-col2,
+    .nobrain-league-header-col3 { width: 44px; text-align: center; }
+    .nobrain-league-header-col4 { width: 22px; }
+    .nobrain-penalty-row {
         display: flex;
         gap: 4px;
         align-items: center;
         margin-bottom: 4px;
     }
-    .aisbc-penalty-row select {
+    .nobrain-penalty-row select {
         flex: 1;
         min-width: 0;
         font-size: 12px;
         height: 24px;
     }
-    .aisbc-penalty-row input {
+    .nobrain-penalty-row input {
         width: 44px;
         height: 20px;
     }
-    .aisbc-add-penalty-btn {
+    .nobrain-add-penalty-btn {
         margin-top: 6px;
+    }
+    /* 实时取价按钮样式（兼容 FSU 的 im 样式）/ Live price button style (compatible with FSU im style) */
+    .nobrain-quick-list .im {
+        height: 1.8rem;
+        line-height: 1.8rem;
+        cursor: pointer;
+        background-color: #2b3540;
+        font-family: UltimateTeam, sans-serif;
+        border-radius: 4px;
+        padding: 0 0.2rem;
+        font-size: 1rem;
+        font-weight: 900;
+        color: #f2f2f2;
+        overflow: hidden;
+        border: none;
+    }
+    .nobrain-quick-list .im:hover {
+        background-color: #394754;
+    }
+    .nobrain-quick-list.other .im {
+        background-color: #f8eede;
+        color: #ef6405;
+        font-weight: 500;
+        margin-left: 0.3rem;
+        text-align: center;
+    }
+    .nobrain-quick-list.other .im:hover {
+        background-color: #f5efe6;
+    }
+    .nobrain-quick-list .im:disabled,
+    .nobrain-quick-list .im.disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    .phone .nobrain-quick-list .im {
+        font-size: 0.875rem;
     }
 `);
 
@@ -276,8 +333,8 @@ GM_addStyle(`
     "use strict";
 
     // ─── i18n 本地化 / i18n Localization ─────────────────────────────────────────
-    let aisbcLang = 0; // 0=中文, 1=English
-    const aisbcLocale = {
+    let nobrainLang = 0; // 0=中文, 1=English
+    const nobrainLocale = {
         // 设置面板 / Settings panel
         "settings.title":               ["⚙ Nobrain SBC 设置", "⚙ Nobrain SBC Settings"],
         "settings.algo":                ["算法", "Algorithm"],
@@ -304,6 +361,7 @@ GM_addStyle(`
         "param.maxPriceIncrements":     ["购买最大加价步数", "Max Price Increment Steps"],
         "param.showPrices":             ["显示球员价格", "Show Player Prices"],
         "param.priceExpiry":            ["价格缓存时间（分钟）", "Price Cache Duration (min)"],
+        "param.livePriceBeforeSolve":   ["虚拟求解前实时取价", "Live Price Before Solve"],
         "param.apiProxy":               ["自定义 API 代理（留空使用内置随机代理）", "Custom API Proxy (leave blank for built-in)"],
         "settings.tabLeague":           ["联赛筛选", "League Filter"],
         "param.leaguePenalty.hint":     ["指定联赛球员的价格乘以系数，求解器会尽量避免使用，但必要时仍可使用。", "Multiply price of players from specified leagues. Solver avoids them but can still use them."],
@@ -351,6 +409,13 @@ GM_addStyle(`
         // 按钮 / Buttons
         "btn.solve":                    ["求解SBC", "Solve SBC"],
         "btn.conceptSolve":             ["虚拟求解", "Concept Solve"],
+        "btn.livePrice":                ["实时取价", "Live Price"],
+        "btn.getMarketPrice":           ["查询市场低价", "Get Market Price"],
+        "notify.livePriceComplete":     ["实时取价完成：%1 个球员", "Live price complete: %1 players"],
+        "notify.livePriceError":        ["实时取价出错", "Live price error"],
+        "notify.getMarketPriceDone":    ["市场低价：%1", "Market low price: %1"],
+        "notify.getMarketPriceExtinct": ["市场断货（绝版）", "Market extinct"],
+        "notify.getMarketPriceFailed":  ["查询失败", "Query failed"],
         "notify.fsuNotFound":           ["未检测到FSU插件", "FSU not detected"],
         "notify.fsuFillTimeout":        ["FSU填充超时", "FSU fill timed out"],
         "notify.fsuCredit":             ["虚拟球员填充调用了 Futcd_kcka 大大的【FSU】EAFC FUT WEB增强器提供的SBC模板填充功能，感谢！", "Squad autofill powered by Futcd_kcka's 【FSU】EAFC FUT WEB Enhancer SBC template feature. Thanks!"],
@@ -376,7 +441,7 @@ GM_addStyle(`
         "ms.empty":                     ["无结果 / No results", "No results"],
     };
     const L = (key, ...params) => {
-        let text = aisbcLocale.hasOwnProperty(key) ? aisbcLocale[key][aisbcLang] : key;
+        let text = nobrainLocale.hasOwnProperty(key) ? nobrainLocale[key][nobrainLang] : key;
         params.forEach((val, i) => { text = text.replace(`%${i + 1}`, String(val)); });
         return text;
     };
@@ -433,10 +498,10 @@ GM_addStyle(`
     const updateLoaderText = (text) => {
         const clickShield = document.querySelector(".ut-click-shield");
         if (!clickShield) return;
-        let el = clickShield.querySelector(".aisbc-offline-progress");
+        let el = clickShield.querySelector(".nobrain-offline-progress");
         if (!el) {
             el = document.createElement("div");
-            el.className = "aisbc-offline-progress";
+            el.className = "nobrain-offline-progress";
             clickShield.appendChild(el);
         }
         el.textContent = text;
@@ -446,7 +511,7 @@ GM_addStyle(`
         const clickShield = document.querySelector(".ut-click-shield");
         if (clickShield) {
             clickShield.classList.remove("showing");
-            const el = clickShield.querySelector(".aisbc-offline-progress");
+            const el = clickShield.querySelector(".nobrain-offline-progress");
             if (el) el.remove();
         }
         const loaderIcon = document.querySelector(".loaderIcon");
@@ -512,7 +577,11 @@ GM_addStyle(`
 
     const getPrice = (item) => {
         if (!cachedPriceItems) return null;
-        return cachedPriceItems[item.definitionId]?.price || null;
+        const cached = cachedPriceItems[item.definitionId];
+        if (!cached) return null;
+        // 绝版球员视为最高价（15M），优先被替换出去 / Extinct players treated as max price (15M) to prioritize replacement
+        if (cached.isExtinct) return 15000000;
+        return cached.price || null;
     };
 
     // ─── 价格抓取 / Price Fetching ────────────────────────────────────────────────
@@ -553,7 +622,7 @@ GM_addStyle(`
         for (const [rating, minPrice] of minByRating.entries()) {
             const cbrKey = `${rating}_CBR`;
             const existing = cachedPriceItems[cbrKey] || {};
-            cachedPriceItems[cbrKey] = { ...existing, eaId: cbrKey, rating, price: minPrice, timeStamp: new Date(), isExtinct: false };
+            cachedPriceItems[cbrKey] = { ...existing, eaId: cbrKey, rating, price: minPrice, timeStamp: new Date(), isExtinct: false, source: "none" };
         }
         savePriceItems();
     };
@@ -561,9 +630,22 @@ GM_addStyle(`
     const PriceItem = (items) => {
         if (!cachedPriceItems) cachedPriceItems = {};
         const timeStamp = new Date(Date.now());
+        const expiryMin = Number(getOwnSettings().priceExpiry ?? SETTINGS_DEFAULTS.priceExpiry) || 60;
+        const FRESH_MS = expiryMin * 60 * 1000;
+
         for (let key in items) {
             items[key]["timeStamp"] = timeStamp;
             const eaId = items[key]["eaId"];
+
+            // 不覆盖 source="market" 且未过期的缓存 / Don't overwrite fresh market prices
+            const existing = cachedPriceItems[eaId];
+            if (existing?.source === "market" && existing.timeStamp) {
+                const existingTime = new Date(existing.timeStamp).getTime();
+                if (existingTime && (existingTime + FRESH_MS) >= Date.now()) {
+                    continue; // 跳过，保留市场价格 / Skip, keep market price
+                }
+            }
+
             cachedPriceItems[eaId] = items[key];
         }
         updateCBRMinPrice();
@@ -580,9 +662,12 @@ GM_addStyle(`
 
     const isPriceOld = (item) => {
         if (!cachedPriceItems || !(item?.definitionId in cachedPriceItems)) return true;
+        const cached = cachedPriceItems[item.definitionId];
+        // SBC 或 Objective 奖励的价格永不过期 / SBC or Objective reward prices never expire
+        if (cached?.isSbc || cached?.isObjective) return false;
         const expiryMin = Number(getOwnSettings().priceExpiry ?? SETTINGS_DEFAULTS.priceExpiry) || 60;
         const FRESH_MS = expiryMin * 60 * 1000;
-        const timeStamp = new Date(cachedPriceItems[item.definitionId]?.timeStamp);
+        const timeStamp = new Date(cached?.timeStamp);
         if (!timeStamp.getTime()) return true;
         return (timeStamp.getTime() + FRESH_MS) < Date.now();
     };
@@ -623,7 +708,7 @@ GM_addStyle(`
                         const player = players.find(p => p.definitionId === definitionId);
                         if (!player) return;
                         const price = priceMap.get(definitionId);
-                        priceResponse[index] = { eaId: definitionId, price: price || null, rating: player.rating || 0, name: player._staticData?.name || "", isExtinct: !price, lastChecked: Date.now() };
+                        priceResponse[index] = { eaId: definitionId, price: price || null, rating: player.rating || 0, name: player._staticData?.name || "", isExtinct: !price, lastChecked: Date.now(), source: "futnext" };
                     });
                 } else {
                     const params = batch.join("%2C");
@@ -643,7 +728,6 @@ GM_addStyle(`
                     }
                     if (!json) {
                         // 降级到 futnext / Fallback to futnext
-                        console.log("[NoBrainSBC] 代理不可用，降级到 futnext / Proxy unavailable, falling back to futnext");
                         const futnextParams = batch.join("_");
                         const futnextJson = JSON.parse(await externalRequest("GET", `https://enhancer-api.futnext.com/players/prices?ids=${futnextParams}&platform=ps`));
                         const priceMap = new Map();
@@ -652,7 +736,7 @@ GM_addStyle(`
                             const player = players.find(p => p.definitionId === definitionId);
                             if (!player) return;
                             const price = priceMap.get(definitionId);
-                            priceResponse[index] = { eaId: definitionId, price: price || null, rating: player.rating || 0, name: player._staticData?.name || "", isExtinct: !price, lastChecked: Date.now() };
+                            priceResponse[index] = { eaId: definitionId, price: price || null, rating: player.rating || 0, name: player._staticData?.name || "", isExtinct: !price, lastChecked: Date.now(), source: "futnext" };
                         });
                     } else {
                         if (json.data && Array.isArray(json.data)) {
@@ -662,7 +746,7 @@ GM_addStyle(`
                                 const item = priceMap.get(definitionId);
                                 if (item) {
                                     const matchingPlayer = players.find(p => p.definitionId == definitionId);
-                                    priceResponse[index] = { ...item, rating: matchingPlayer?.rating || 0, name: matchingPlayer?._staticData?.name || "" };
+                                    priceResponse[index] = { ...item, rating: matchingPlayer?.rating || 0, name: matchingPlayer?._staticData?.name || "", source: "futgg" };
                                 }
                             });
                         }
@@ -877,6 +961,7 @@ GM_addStyle(`
         maxPriceIncrements: 1,
         priceExpiry: 60,
         apiProxy: "",
+        livePriceBeforeSolve: false,
         leaguePenalties: [
             {leagueId: 13, minRating: 77, maxRating: 82},
             {leagueId: 53, minRating: 77, maxRating: 82},
@@ -916,14 +1001,14 @@ GM_addStyle(`
     };
 
     const showSettingsPanel = () => {
-        const existing = document.getElementById("aisbc-settings-overlay");
+        const existing = document.getElementById("nobrain-settings-overlay");
         if (existing) { existing.remove(); return; }
 
         const current = { ...SETTINGS_DEFAULTS, ...getOwnSettings() };
 
         const overlay = document.createElement("div");
-        overlay.id = "aisbc-settings-overlay";
-        overlay.className = "aisbc-settings-overlay";
+        overlay.id = "nobrain-settings-overlay";
+        overlay.className = "nobrain-settings-overlay";
 
         const EXCLUDE_TOGGLES = [
             ["excludeSbc", L("param.excludeSbc")],
@@ -943,6 +1028,7 @@ GM_addStyle(`
         ];
         const UI_TOGGLES = [
             ["showPrices", L("param.showPrices")],
+            ["livePriceBeforeSolve", L("param.livePriceBeforeSolve")],
         ];
         const UI_NUMBERS = [
             ["priceExpiry", L("param.priceExpiry"), 1, 1440],
@@ -954,90 +1040,90 @@ GM_addStyle(`
         const NUMBERS = [...ALGO_NUMBERS, ...UI_NUMBERS];
 
         const makeToggleRows = (list) => list.map(([key, label]) => `
-            <div class="aisbc-settings-row">
+            <div class="nobrain-settings-row">
                 <label>${label}</label>
-                <input type="checkbox" id="aisbc-${key}" ${current[key] ? "checked" : ""}>
+                <input type="checkbox" id="nobrain-${key}" ${current[key] ? "checked" : ""}>
             </div>`).join("");
 
         const makeNumberRows = (list) => list.map(([key, label, min = 0, max = 100]) => `
-            <div class="aisbc-settings-row">
+            <div class="nobrain-settings-row">
                 <label>${label}</label>
-                <input type="number" id="aisbc-${key}" value="${current[key]}" min="${min}" max="${max}">
+                <input type="number" id="nobrain-${key}" value="${current[key]}" min="${min}" max="${max}">
             </div>`).join("");
 
         const toggleRows = makeToggleRows(TOGGLES);
         const numberRows = makeNumberRows(NUMBERS);
 
         const textRows = TEXTS.map(([key, label]) => `
-            <div class="aisbc-settings-row">
+            <div class="nobrain-settings-row">
                 <label>${label}</label>
-                <input type="text" id="aisbc-${key}" value="${current[key] || ""}" placeholder="${BUILTIN_PROXIES[0]}" style="width:200px;font-size:11px;">
+                <input type="text" id="nobrain-${key}" value="${current[key] || ""}" placeholder="${BUILTIN_PROXIES[0]}" style="width:200px;font-size:11px;">
             </div>`).join("");
 
         overlay.innerHTML = `
-            <div class="aisbc-settings-card">
+            <div class="nobrain-settings-card">
                 <h2>${L("settings.title")}</h2>
-                <div class="aisbc-tabs">
-                    <button class="aisbc-tab active" data-tab="algo">${L("settings.algo")}</button>
-                    <button class="aisbc-tab" data-tab="exclude">${L("settings.exclude")}</button>
-                    <button class="aisbc-tab" data-tab="players">${L("settings.tabPlayers")}</button>
-                    <button class="aisbc-tab" data-tab="league">${L("settings.tabLeague")}</button>
-                    <button class="aisbc-tab" data-tab="ui">${L("settings.ui")}</button>
+                <div class="nobrain-tabs">
+                    <button class="nobrain-tab active" data-tab="algo">${L("settings.algo")}</button>
+                    <button class="nobrain-tab" data-tab="exclude">${L("settings.exclude")}</button>
+                    <button class="nobrain-tab" data-tab="players">${L("settings.tabPlayers")}</button>
+                    <button class="nobrain-tab" data-tab="league">${L("settings.tabLeague")}</button>
+                    <button class="nobrain-tab" data-tab="ui">${L("settings.ui")}</button>
                 </div>
-                <div class="aisbc-tab-panel active" data-panel="algo">
+                <div class="nobrain-tab-panel active" data-panel="algo">
                     ${makeNumberRows(ALGO_NUMBERS)}
                 </div>
-                <div class="aisbc-tab-panel" data-panel="exclude">
+                <div class="nobrain-tab-panel" data-panel="exclude">
                     ${makeToggleRows(EXCLUDE_TOGGLES)}
                 </div>
-                <div class="aisbc-tab-panel" data-panel="players">
-                    <div id="aisbc-exclude-players-anchor"></div>
+                <div class="nobrain-tab-panel" data-panel="players">
+                    <div id="nobrain-exclude-players-anchor"></div>
                     <div style="height:280px;flex-shrink:0;"></div>
                 </div>
-                <div class="aisbc-tab-panel" data-panel="league">
-                    <div class="aisbc-league-hint">${L("param.leaguePenalty.hint")}</div>
-                    <div class="aisbc-settings-row">
+                <div class="nobrain-tab-panel" data-panel="league">
+                    <div class="nobrain-league-hint">${L("param.leaguePenalty.hint")}</div>
+                    <div class="nobrain-settings-row">
                         <label>${L("param.leaguePenaltyMult")}</label>
-                        <input type="number" id="aisbc-leaguePenaltyMult" value="${current.leaguePenaltyMult || 200}" min="100" max="10000">
+                        <input type="number" id="nobrain-leaguePenaltyMult" value="${current.leaguePenaltyMult || 200}" min="100" max="10000">
                     </div>
-                    <div class="aisbc-league-header">
-                        <span class="aisbc-league-header-col1">${L("param.leaguePenalty.league")}</span>
-                        <span class="aisbc-league-header-col2">${L("param.leaguePenalty.minRating")}</span>
-                        <span class="aisbc-league-header-col3">${L("param.leaguePenalty.maxRating")}</span>
-                        <span class="aisbc-league-header-col4"></span>
+                    <div class="nobrain-league-header">
+                        <span class="nobrain-league-header-col1">${L("param.leaguePenalty.league")}</span>
+                        <span class="nobrain-league-header-col2">${L("param.leaguePenalty.minRating")}</span>
+                        <span class="nobrain-league-header-col3">${L("param.leaguePenalty.maxRating")}</span>
+                        <span class="nobrain-league-header-col4"></span>
                     </div>
-                    <div id="aisbc-league-penalties"></div>
-                    <button class="btn-standard mini aisbc-add-penalty-btn" id="aisbc-add-penalty"><span class="button__text">${L("param.leaguePenalty.add")}</span></button>
+                    <div id="nobrain-league-penalties"></div>
+                    <button class="btn-standard mini nobrain-add-penalty-btn" id="nobrain-add-penalty"><span class="button__text">${L("param.leaguePenalty.add")}</span></button>
                 </div>
-                <div class="aisbc-tab-panel" data-panel="ui">
+                <div class="nobrain-tab-panel" data-panel="ui">
                     ${makeNumberRows(UI_NUMBERS)}
                     ${makeToggleRows(UI_TOGGLES)}
                     ${textRows}
-                    <div class="aisbc-settings-row">
+                    <div class="nobrain-settings-row">
                         <label></label>
-                        <button class="btn-standard mini" id="aisbc-clear-price-cache"><span class="button__text">${L("btn.clearPriceCache")}</span></button>
+                        <button class="btn-standard mini" id="nobrain-clear-price-cache"><span class="button__text">${L("btn.clearPriceCache")}</span></button>
                     </div>
                 </div>
-                <div class="aisbc-settings-footer">
-                    <button class="btn-standard mini" id="aisbc-settings-reset"><span class="button__text">${L("settings.reset")}</span></button>
-                    <button class="btn-standard mini" id="aisbc-settings-save"><span class="button__text">${L("settings.save")}</span></button>
-                    <button class="btn-standard mini" id="aisbc-settings-close"><span class="button__text">${L("settings.close")}</span></button>
+                <div class="nobrain-settings-footer">
+                    <button class="btn-standard mini" id="nobrain-settings-reset"><span class="button__text">${L("settings.reset")}</span></button>
+                    <button class="btn-standard mini" id="nobrain-settings-save"><span class="button__text">${L("settings.save")}</span></button>
+                    <button class="btn-standard mini" id="nobrain-settings-close"><span class="button__text">${L("settings.close")}</span></button>
                 </div>
             </div>`;
 
         overlay.addEventListener("click", (e) => {
             if (e.target === overlay) overlay.remove();
         });
-        overlay.querySelector("#aisbc-settings-close").addEventListener("click", () => overlay.remove());
+        overlay.querySelector("#nobrain-settings-close").addEventListener("click", () => overlay.remove());
 
         // 联赛筛选面板逻辑 / League penalty panel logic
         const leagueList = (typeof factories !== "undefined" && factories.DataProvider?.getLeagueDP)
             ? factories.DataProvider.getLeagueDP(true).filter(l => l.id !== -1).map(l => ({ id: l.id, name: l.label || l.name || String(l.id) }))
             : Object.entries(KNOWN_LEAGUES).map(([id, name]) => ({ id: Number(id), name }));
-        const getUsedLeagueIds = () => [...penaltiesContainer.querySelectorAll(".aisbc-penalty-row select")].map(s => Number(s.value));
+        const getUsedLeagueIds = () => [...penaltiesContainer.querySelectorAll(".nobrain-penalty-row select")].map(s => Number(s.value));
         const makePenaltyRow = (pen = {}) => {
             const row = document.createElement("div");
-            row.className = "aisbc-penalty-row";
+            row.className = "nobrain-penalty-row";
             const usedIds = getUsedLeagueIds();
             const options = leagueList.filter(l => l.id === pen.leagueId || !usedIds.includes(l.id)).map(l => `<option value="${l.id}">${l.name}(${l.id})</option>`).join("");
             row.innerHTML = `<select>${options}</select><input type="number" placeholder="${L("param.leaguePenalty.minRating")}" min="1" max="99" value="${pen.minRating??1}"><input type="number" placeholder="${L("param.leaguePenalty.maxRating")}" min="1" max="99" value="${pen.maxRating??99}"><button class="btn-standard mini penalty-del" style="padding:0 6px;"><span class="button__text">×</span></button>`;
@@ -1048,46 +1134,46 @@ GM_addStyle(`
         };
         const updatePenaltySelects = () => {
             const usedIds = getUsedLeagueIds();
-            penaltiesContainer.querySelectorAll(".aisbc-penalty-row").forEach(row => {
+            penaltiesContainer.querySelectorAll(".nobrain-penalty-row").forEach(row => {
                 const sel = row.querySelector("select");
                 const currentId = Number(sel.value);
                 sel.innerHTML = leagueList.filter(l => l.id === currentId || !usedIds.includes(l.id)).map(l => `<option value="${l.id}">${l.name}(${l.id})</option>`).join("");
                 sel.value = currentId;
             });
         };
-        const penaltiesContainer = overlay.querySelector("#aisbc-league-penalties");
+        const penaltiesContainer = overlay.querySelector("#nobrain-league-penalties");
         (current.leaguePenalties || []).forEach(pen => penaltiesContainer.appendChild(makePenaltyRow(pen)));
-        overlay.querySelector("#aisbc-add-penalty").addEventListener("click", () => penaltiesContainer.appendChild(makePenaltyRow()));
+        overlay.querySelector("#nobrain-add-penalty").addEventListener("click", () => penaltiesContainer.appendChild(makePenaltyRow()));
 
-        overlay.querySelector("#aisbc-settings-save").addEventListener("click", () => {
+        overlay.querySelector("#nobrain-settings-save").addEventListener("click", () => {
             const result = {};
             TOGGLES.forEach(([key]) => {
-                result[key] = overlay.querySelector(`#aisbc-${key}`).checked;
+                result[key] = overlay.querySelector(`#nobrain-${key}`).checked;
             });
             NUMBERS.forEach(([key]) => {
-                result[key] = Number(overlay.querySelector(`#aisbc-${key}`).value);
+                result[key] = Number(overlay.querySelector(`#nobrain-${key}`).value);
             });
             TEXTS.forEach(([key]) => {
-                result[key] = overlay.querySelector(`#aisbc-${key}`).value.trim();
+                result[key] = overlay.querySelector(`#nobrain-${key}`).value.trim();
             });
-            result.leaguePenalties = [...penaltiesContainer.querySelectorAll(".aisbc-penalty-row")].map(row => {
+            result.leaguePenalties = [...penaltiesContainer.querySelectorAll(".nobrain-penalty-row")].map(row => {
                 const inputs = row.querySelectorAll("input");
                 return { leagueId: Number(row.querySelector("select").value), minRating: Number(inputs[0].value), maxRating: Number(inputs[1].value) };
             });
-            result.leaguePenaltyMult = Number(overlay.querySelector("#aisbc-leaguePenaltyMult").value);
+            result.leaguePenaltyMult = Number(overlay.querySelector("#nobrain-leaguePenaltyMult").value);
             saveOwnSettings(result);
             overlay.remove();
             showNotification(L("settings.saved"), UINotificationType.POSITIVE);
         });
 
-        overlay.querySelector("#aisbc-settings-reset").addEventListener("click", () => {
+        overlay.querySelector("#nobrain-settings-reset").addEventListener("click", () => {
             const excluded = getOwnSettings().excludePlayerIds;
             saveOwnSettings({ ...SETTINGS_DEFAULTS, excludePlayerIds: excluded });
             overlay.remove();
             showNotification(L("settings.resetDone"), UINotificationType.POSITIVE);
         });
 
-        overlay.querySelector("#aisbc-clear-price-cache").addEventListener("click", (e) => {
+        overlay.querySelector("#nobrain-clear-price-cache").addEventListener("click", (e) => {
             cachedPriceItems = null;
             _loadPriceItemsPromise = null;
             const req = indexedDB.open("futSBCDatabase", 2);
@@ -1115,7 +1201,7 @@ GM_addStyle(`
         const loadPlayersTab = () => {
             if (playersLoaded) return;
             playersLoaded = true;
-            const anchor = overlay.querySelector("#aisbc-exclude-players-anchor");
+            const anchor = overlay.querySelector("#nobrain-exclude-players-anchor");
             anchor.textContent = L("misc.loading");
             fetchPlayers().then(players => {
                 if (!document.contains(overlay)) return;
@@ -1130,12 +1216,12 @@ GM_addStyle(`
                 );
             });
         };
-        overlay.querySelectorAll(".aisbc-tab").forEach(tab => {
+        overlay.querySelectorAll(".nobrain-tab").forEach(tab => {
             tab.addEventListener("click", () => {
-                overlay.querySelectorAll(".aisbc-tab").forEach(t => t.classList.remove("active"));
-                overlay.querySelectorAll(".aisbc-tab-panel").forEach(p => p.classList.remove("active"));
+                overlay.querySelectorAll(".nobrain-tab").forEach(t => t.classList.remove("active"));
+                overlay.querySelectorAll(".nobrain-tab-panel").forEach(p => p.classList.remove("active"));
                 tab.classList.add("active");
-                const panel = overlay.querySelector(`.aisbc-tab-panel[data-panel="${tab.dataset.tab}"]`);
+                const panel = overlay.querySelector(`.nobrain-tab-panel[data-panel="${tab.dataset.tab}"]`);
                 if (panel) panel.classList.add("active");
                 if (tab.dataset.tab === "players") loadPlayersTab();
             });
@@ -1709,28 +1795,83 @@ GM_addStyle(`
     };
 
     // ─── 价格显示 / Price Display ─────────────────────────────────────────────────
+    /**
+     * 更新单个球员的价格标签（通用函数）/ Update price label for a single player (universal function)
+     * @param {HTMLElement} rootElement - 球员卡片的根元素 / Root element of player card
+     * @param {Object} item - 球员对象 / Player item object
+     * @param {Object} options - 可选配置 / Optional config
+     * @param {boolean} options.showSpecialMarkers - 是否显示特殊标记（EXT/SBC/OBJ），默认 true / Show special markers, default true
+     */
+    const updatePriceLabel = (rootElement, item) => {
+        // 移除旧标签 / Remove old label
+        rootElement.querySelector('.nobrain-price-label')?.remove();
+
+        // 检查是否显示价格 / Check if should show price
+        if (!getSharedSettings("showPrices") || !item?.definitionId || !cachedPriceItems) {
+            return;
+        }
+
+        const entry = cachedPriceItems[item.definitionId];
+        if (!entry) return;
+
+        // 创建价格标签 / Create price label
+        const label = document.createElement("div");
+        label.className = "nobrain-price-label";
+
+        // 判断球员类型 / Determine player type
+        let priceType = null;
+        if (entry.isSbc) {
+            priceType = "sbc";
+        } else if (entry.isObjective) {
+            // 区分 SP (赛季通行证) 和 OB (普通 Objective) / Distinguish SP (Season Pass) from OB (regular Objective)
+            if (entry.premiumSeasonPassLevel !== null || entry.standardSeasonPassLevel !== null) {
+                priceType = "sp";
+            } else {
+                priceType = "objective";
+            }
+        }
+
+        // 显示价格或标记 / Display price or marker
+        if (entry.isExtinct) {
+            label.textContent = "EXT";
+            label.classList.add("extinct");
+        } else if (priceType === "sbc" && entry.price) {
+            // SBC 有价格，只显示价格数字，用 sbc 背景色 / SBC with price, show price only with sbc background
+            label.textContent = entry.price.toLocaleString();
+            label.classList.add("sbc");
+        } else if (priceType === "sbc") {
+            // SBC 无价格，显示 SBC 文字 / SBC without price, show SBC text
+            label.textContent = "SBC";
+            label.classList.add("sbc");
+        } else if (priceType === "sp") {
+            // SP 只显示 SP 文字 / SP shows SP text only
+            label.textContent = "SP";
+            label.classList.add("sp");
+        } else if (priceType === "objective") {
+            // OBJ 只显示 OBJ 文字 / OBJ shows OBJ text only
+            label.textContent = "OBJ";
+            label.classList.add("objective");
+        } else if (entry.price) {
+            // 普通可交易球员 / Regular tradeable player
+            label.textContent = entry.price.toLocaleString();
+            if (isFodder(item)) label.classList.add("fodder");
+            if (isPrecious(item)) label.classList.add("precious");
+        } else {
+            return; // 没有价格也没有特殊标记，不显示 / No price or special marker, don't show
+        }
+
+        rootElement.prepend(label);
+    };
+
+    /**
+     * 批量刷新 SBC 阵容价格标签 / Batch refresh SBC squad price labels
+     * @param {Array} squadSlots - 格式为 [{ item, rootElement }] / Format: [{ item, rootElement }]
+     */
     const appendPricesToSquad = (squadSlots) => {
         if (!cachedPriceItems || !squadSlots?.length) return;
         squadSlots.forEach(({ rootElement, item }) => {
             if (!item || !item.definitionId) return;
-            const old = rootElement.querySelector(".aisbc-price-label");
-            if (old) old.remove();
-            const entry = cachedPriceItems[item.definitionId];
-            if (!entry || !entry.price) return;
-            const label = document.createElement("div");
-            label.className = "aisbc-price-label";
-            const p = entry.price;
-            label.textContent = p.toLocaleString();
-            if (!entry.isExtinct && !entry.isObjective && isFodder(item)) {
-                label.style.background = "#00a651";
-                label.style.color = "#fff";
-                label.style.border = "1px solid #4cdb85";
-            }
-            // 珍贵球员：价格 >= 2倍CBR且 >= 2倍最低限价，红色背景警示 / Precious: price >= 2x CBR and >= 2x min price limit, show red warning
-            if (isPrecious(item)) {
-                label.classList.add("precious");
-            }
-            rootElement.prepend(label);
+            updatePriceLabel(rootElement, item);
         });
     };
 
@@ -1755,7 +1896,7 @@ GM_addStyle(`
             this._langNotified = true;
             try {
                 const lang = services.Localization.locale.language;
-                if (!lang.startsWith("zh")) aisbcLang = 1;
+                if (!lang.startsWith("zh")) nobrainLang = 1;
             } catch (e) {
                 // default to Chinese
             }
@@ -2296,6 +2437,21 @@ GM_addStyle(`
                         // 等 FSU 的 finally（hideLoader）执行完再开始求解
                         // Wait for FSU's finally (hideLoader) to run before starting solver
                         await new Promise(r => setTimeout(r, 100));
+
+                        // 实时取价，确保价格最新（如果设置启用）/ Live price fetch if enabled
+                        const livePriceEnabled = getOwnSettings().livePriceBeforeSolve ?? SETTINGS_DEFAULTS.livePriceBeforeSolve;
+                        if (livePriceEnabled) {
+                            const squad = _challenge.squad;
+                            if (squad) {
+                                try {
+                                    await fetchLivePricesForSquad(squad, { refreshLabels: false });
+                                } catch (e) {
+                                    // 取价失败不影响求解，继续执行 / Price fetch failure doesn't block solving
+                                    console.warn("[虚拟求解] 实时取价失败:", e);
+                                }
+                            }
+                        }
+
                         await nobrainSolveSBC(_challenge);
                     } finally {
                         restoreBack();
@@ -2486,6 +2642,153 @@ GM_addStyle(`
         return response;
     };
 
+    // ─── 实时取价功能 / Live price fetch function ─────────────────────────────────
+    /**
+     * 对阵容中的所有球员进行实时取价 / Fetch live prices for all players in squad
+     * @param {Object} squad - 阵容对象 / Squad object
+     * @param {Object} options - 可选配置 / Optional config
+     * @param {boolean} options.refreshLabels - 是否刷新价格标签 / Whether to refresh price labels
+     * @param {Object} options.controllerRef - Controller 引用（用于获取 slot views）/ Controller reference for getting slot views
+     * @returns {Promise<number>} 成功取价的球员数量 / Number of successfully fetched prices
+     */
+    const fetchLivePricesForSquad = async (squad, options = {}) => {
+        const { refreshLabels = false, controllerRef = null } = options;
+
+        if (!squad || typeof squad.getFieldPlayers !== 'function') {
+            throw new Error("无法获取阵容球员");
+        }
+
+        const fieldPlayers = squad.getFieldPlayers();
+
+        // 过滤出有效球员（非砖块、有 item）/ Filter valid players (non-brick, has item)
+        const allItems = fieldPlayers
+            .map((player, index) => ({ player, index }))
+            .filter(({ player }) => !player.isBrick() && player.item && player.item.definitionId);
+
+        if (!allItems.length) {
+            throw new Error(L("notify.noConcepts"));
+        }
+
+        // 如果需要刷新标签，获取 slot views / Get slot views if label refresh is needed
+        let slotViews = [];
+        if (refreshLabels && controllerRef) {
+            const squadView = controllerRef.getView?.() || controllerRef._squadView;
+            const pitchView = squadView?.getPitch?.();
+            slotViews = pitchView?._slots || [];
+        }
+
+        showLoader();
+        let done = 0;
+        let success = 0;
+
+        for (const { player, index } of allItems) {
+            const item = player.item;
+            const result = await fetchAndCacheMarketPrice(item);
+            done++;
+
+            if (result) {
+                success++;
+                // 重新加载价格缓存以获取最新价格 / Reload price cache to get latest price
+                await loadPriceItems();
+
+                // 立即刷新这个球员的价格标签 / Immediately refresh this player's price label
+                if (refreshLabels && slotViews[index]) {
+                    const cardElement = slotViews[index].getRootElement();
+                    if (cardElement) {
+                        updatePriceLabel(cardElement, item);
+                    }
+                }
+            }
+
+            updateLoaderText(`实时取价 ${done}/${allItems.length}...`);
+
+            // 延迟避免被封 / Delay to avoid ban
+            if (done < allItems.length) {
+                await new Promise((r) => setTimeout(r, 1500 + Math.random() * 1000));
+            }
+        }
+
+        hideLoader();
+        return success;
+    };
+
+    // ─── 在阵容显示页面注入"取现价"按钮 / Inject live price button in squad view ───
+    // Hook UTSBCSquadOverviewViewController 注入"取现价"按钮 / Hook to inject live price button
+    const _origInitWithSBCSet = UTSBCSquadOverviewViewController.prototype.initWithSBCSet;
+    UTSBCSquadOverviewViewController.prototype.initWithSBCSet = function (...args) {
+        const result = _origInitWithSBCSet.call(this, ...args);
+
+        // 延迟执行，等待 FSU 创建 quickOther 容器
+        setTimeout(() => {
+            // 如果按钮已存在，跳过 / Skip if button already exists
+            if (document.getElementById("idLivePriceInSquad")) {
+                return;
+            }
+
+            // 保存 controller 引用 / Save controller reference
+            const controllerRef = this;
+
+            const livePriceBtn = createButton("idLivePriceInSquad", L("btn.livePrice"), async () => {
+                if (livePriceBtn.dataset.running === "true") return;
+                livePriceBtn.dataset.running = "true";
+                livePriceBtn.setAttribute("disabled", "disabled");
+                livePriceBtn.classList.add("disabled");
+
+                try {
+                    // 使用 FSU 的方法：cntlr.current()._squad.getFieldPlayers()
+                    // 手机端和桌面端的 squad 访问路径不同 / Use FSU's method, different paths for mobile and desktop
+                    const currentController = typeof cntlr !== 'undefined' && cntlr.current ? cntlr.current() : controllerRef;
+                    const isPhone = typeof window.isPhone === 'function' ? window.isPhone() : false;
+                    const squad = isPhone ? currentController.squadContext?.squad : currentController._squad;
+
+                    const success = await fetchLivePricesForSquad(squad, {
+                        refreshLabels: true,
+                        controllerRef: controllerRef
+                    });
+                    showNotification(L("notify.livePriceComplete", success), UINotificationType.POSITIVE);
+
+                } catch (err) {
+                    console.error("[NoBrainSBC] Live price error", err);
+                    hideLoader();
+                    showNotification(err.message || L("notify.livePriceError"), UINotificationType.NEGATIVE);
+                } finally {
+                    delete livePriceBtn.dataset.running;
+                    livePriceBtn.removeAttribute("disabled");
+                    livePriceBtn.classList.remove("disabled");
+                }
+            }, "im");
+
+            if (!livePriceBtn) {
+                return;
+            }
+
+
+            // 创建自己的容器 / Create own container
+            if (!this._nobrainQuickOther) {
+                const container = document.createElement("div");
+                container.className = "nobrain-quick-list other";
+                this._nobrainQuickOther = container;
+            }
+            this._nobrainQuickOther.appendChild(livePriceBtn);
+
+            // 插入到 FSU 容器旁边 / Insert next to FSU container
+            if (this._fsu?.quickOther) {
+                const fsuParent = this._fsu.quickOther.parentNode;
+                if (fsuParent && !fsuParent.contains(this._nobrainQuickOther)) {
+                    fsuParent.appendChild(this._nobrainQuickOther);
+                }
+            } else {
+                // 如果 FSU 不存在，插入到阵容视图上方 / If FSU doesn't exist, insert above squad view
+                const squadView = this._squadView?.__root;
+                if (squadView && squadView.parentNode && !squadView.parentNode.contains(this._nobrainQuickOther)) {
+                    squadView.parentNode.insertBefore(this._nobrainQuickOther, squadView);
+                }
+            }
+        }, 100);
+
+        return result;
+    };
+
     // ─── 球员列表价格显示 / Player List Price Display ────────────────────────────
     const isFodder = (item) => {
         if (!cachedPriceItems) return false;
@@ -2518,23 +2821,6 @@ GM_addStyle(`
         return basePrice > 0 && price >= basePrice * 2;
     };
 
-    const getPriceDiv = (item) => {
-        if (!getSharedSettings("showPrices") || !item.definitionId) return null;
-        if (!cachedPriceItems) {
-            return null;
-        }
-        const entry = cachedPriceItems[item.definitionId];
-        if (!entry || !entry.price) return null;
-        const price = entry.price;
-        const el = document.createElement("div");
-        el.className = "aisbc-price-label";
-        if (isFodder(item)) { el.style.background = "#00a651"; el.style.color = "#fff"; el.style.border = "1px solid #4cdb85"; }
-        if (isPrecious(item)) {
-            el.classList.add("precious");
-        }
-        el.textContent = entry.isExtinct ? L("price.extinct") : entry.isObjective ? "" : price.toLocaleString();
-        return el;
-    };
 
     const UTPlayerItemView_renderItem = UTPlayerItemView.prototype.renderItem;
     UTPlayerItemView.prototype.renderItem = function (item, t) {
@@ -2542,14 +2828,12 @@ GM_addStyle(`
         const root = this.__root;
         if (!root) return result;
         if (cachedPriceItems) {
-            const el = getPriceDiv(item);
-            if (el) { root.querySelector(".aisbc-price-label")?.remove(); root.prepend(el); }
+            updatePriceLabel(root, item);
             root.classList.toggle("locked", isItemLocked(item));
         } else {
             setTimeout(async () => {
                 await loadPriceItems();
-                const el = getPriceDiv(item);
-                if (el) { root.querySelector(".aisbc-price-label")?.remove(); root.prepend(el); }
+                updatePriceLabel(root, item);
                 root.classList.toggle("locked", isItemLocked(item));
             }, 0);
         }
@@ -2575,9 +2859,7 @@ GM_addStyle(`
                 const cardView = row.itemComponent || row;
                 const root = cardView.__root;
                 if (!root) return;
-                root.querySelector(".aisbc-price-label")?.remove();
-                const el = getPriceDiv(item);
-                if (el) root.prepend(el);
+                updatePriceLabel(root, item);
             });
         }, 300);
     };
@@ -2609,9 +2891,7 @@ GM_addStyle(`
                         || (row.childViews || []).find(v => v instanceof UTPlayerItemView);
                     const root = cardView?.__root;
                     if (!root) return;
-                    root.querySelector(".aisbc-price-label")?.remove();
-                    const el = getPriceDiv(row.data);
-                    if (el) root.prepend(el);
+                    updatePriceLabel(root, row.data);
                 });
             });
         }, 300);
@@ -2636,9 +2916,7 @@ GM_addStyle(`
                 const container = containers[idx];
                 if (!container) return;
                 const cardRoot = container.querySelector(".ut-item") || container;
-                cardRoot.querySelector(".aisbc-price-label")?.remove();
-                const el = getPriceDiv(item);
-                if (el) cardRoot.prepend(el);
+                updatePriceLabel(cardRoot, item);
             });
         }, 500);
         return result;
@@ -2680,14 +2958,60 @@ GM_addStyle(`
             }, EventType.TAP);
             this.lockUnlockButton = button;
         }
+        // 查询市场低价按钮，每次 setItem 重建（跟随当前球员）
+        // Get Market Price button, recreated each setItem to follow current player
+        if (!this.getMarketPriceButton) {
+            const btn = new UTGroupButtonControl();
+            btn.init();
+            insertAfter(btn, this._btnDiscard);
+            btn.setInteractionState(true);
+            btn.setText(L("btn.getMarketPrice"));
+            btn.addTarget(this, async () => {
+                btn.setInteractionState(false);
+                btn.setText(L("misc.loading"));
+                try {
+                    await loadPriceItems();
+                    const listing = await fetchMarketPrice(e);
+                    if (listing) {
+                        await loadPriceItems();
+                        const price = cachedPriceItems?.[e.definitionId]?.price || listing.buyNowPrice || 0;
+                        btn.setText(L("btn.getMarketPrice"));
+                        btn.setSubtext(price.toLocaleString());
+                        btn.displayCurrencyIcon(true);
+                        showNotification(L("notify.getMarketPriceDone", price.toLocaleString()), UINotificationType.POSITIVE);
+                        // 刷新列表价格标签 / Refresh list price labels
+                        cntlr.right()?.renderView();
+                    } else {
+                        const cached = cachedPriceItems?.[e.definitionId];
+                        btn.setText(L("btn.getMarketPrice"));
+                        if (cached?.isExtinct) {
+                            btn.setSubtext(L("notify.getMarketPriceExtinct"));
+                            showNotification(L("notify.getMarketPriceExtinct"), UINotificationType.NEGATIVE);
+                        } else {
+                            showNotification(L("notify.getMarketPriceFailed"), UINotificationType.NEGATIVE);
+                        }
+                        // 刷新列表价格标签（绝版也需要刷新）/ Refresh list price labels (extinct also needs refresh)
+                        cntlr.right()?.renderView();
+                    }
+                } catch (err) {
+                    btn.setText(L("btn.getMarketPrice"));
+                    showNotification(L("notify.getMarketPriceFailed"), UINotificationType.NEGATIVE);
+                } finally {
+                    btn.setInteractionState(true);
+                }
+            }, EventType.TAP);
+            this.getMarketPriceButton = btn;
+        }
         return result;
     };
 
     const UTDefaultAction = UTDefaultActionPanelView.prototype.render;
     UTDefaultActionPanelView.prototype.render = function (e, t, i, o, n, r, s) {
         const result = UTDefaultAction.call(this, e, t, i, o, n, r, s);
-        if (e.loans > -1 || !e.isPlayer() || !e.id || e.isTimeLimited()) return result;
-        if (!e?.duplicateId > 0 && !isItemFixed(e) && !this.lockUnlockButton) {
+        if (!e.isPlayer() || !e.id) return result;
+
+        // 锁定/解锁按钮 - 只对非租借、非限时、非固定球员显示 / Lock/Unlock button - only for non-loan, non-limited, non-fixed players
+        if (!e?.duplicateId > 0 && !isItemFixed(e) && e.loans === -1 && !e.isTimeLimited() && !this.lockUnlockButton) {
             const label = isItemLocked(e) ? lockedLabel() : unlockedLabel();
             const button = new UTGroupButtonControl();
             button.init();
@@ -2713,6 +3037,60 @@ GM_addStyle(`
             }, EventType.TAP);
             this.lockUnlockButton = button;
         }
+
+        // 查询市场低价按钮 - 对所有球员显示 / Get Market Price button - show for all players
+        if (!this.getMarketPriceButton) {
+            const btn = new UTGroupButtonControl();
+            btn.init();
+            insertAfter(btn, this._discardButton);
+            btn.setInteractionState(true);
+            btn.setText(L("btn.getMarketPrice"));
+            btn.addTarget(this, async () => {
+                btn.setInteractionState(false);
+                btn.setText(L("misc.loading"));
+                try {
+                    await loadPriceItems();
+                    const listing = await fetchMarketPrice(e);
+                    if (listing) {
+                        await loadPriceItems();
+                        const price = cachedPriceItems?.[e.definitionId]?.price || listing.buyNowPrice || 0;
+                        btn.setText(L("btn.getMarketPrice"));
+                        btn.setSubtext(price.toLocaleString());
+                        btn.displayCurrencyIcon(true);
+                        showNotification(L("notify.getMarketPriceDone", price.toLocaleString()), UINotificationType.POSITIVE);
+                        // 刷新列表价格标签 / Refresh list price labels
+                        try {
+                            cntlr.left()?.renderView();
+                            cntlr.right()?.renderView();
+                        } catch (err) {
+                            cntlr.left()?.refreshList();
+                        }
+                    } else {
+                        const cached = cachedPriceItems?.[e.definitionId];
+                        btn.setText(L("btn.getMarketPrice"));
+                        if (cached?.isExtinct) {
+                            btn.setSubtext(L("notify.getMarketPriceExtinct"));
+                            showNotification(L("notify.getMarketPriceExtinct"), UINotificationType.NEGATIVE);
+                        } else {
+                            showNotification(L("notify.getMarketPriceFailed"), UINotificationType.NEGATIVE);
+                        }
+                        // 刷新列表价格标签（绝版也需要刷新）/ Refresh list price labels (extinct also needs refresh)
+                        try {
+                            cntlr.left()?.renderView();
+                            cntlr.right()?.renderView();
+                        } catch (err) {
+                            cntlr.left()?.refreshList();
+                        }
+                    }
+                } catch (err) {
+                    btn.setText(L("btn.getMarketPrice"));
+                    showNotification(L("notify.getMarketPriceFailed"), UINotificationType.NEGATIVE);
+                } finally {
+                    btn.setInteractionState(true);
+                }
+            }, EventType.TAP);
+            this.getMarketPriceButton = btn;
+        }
         return result;
     };
 
@@ -2733,7 +3111,6 @@ GM_addStyle(`
             const ulist = await fetchUnassigned();
             const toTeam = ulist.filter((item) => item.isMovable());
             if (toTeam.length > 0) {
-                console.log(`[NoBrainSBC] 移动未分配球员到俱乐部 / Moving unassigned to club: count=${toTeam.length}`);
                 services.Item.move(toTeam, 7);
             }
         } catch (err) {
@@ -2743,6 +3120,34 @@ GM_addStyle(`
 
     const fetchMarketPrice = async (player) => {
         if (!player) return null;
+
+        // 检查缓存中是否已标记为 SBC 或 Objective 奖励 / Check if already marked as SBC or Objective reward in cache
+        await loadPriceItems();
+        const cached = cachedPriceItems?.[player.definitionId];
+        if (cached?.isSbc || cached?.isObjective) {
+            return null;
+        }
+
+        // 保存市场价格到缓存的辅助函数 / Helper function to save market price to cache
+        const saveMarketPrice = () => {
+            if (bestListing && Number.isFinite(bestPrice)) {
+                const defId = player.definitionId;
+                const rating = player.rating || player._staticData?.rating || 0;
+                const playerName = player._staticData?.name || player._staticData?.lastName || player.name || String(defId);
+                PriceItem({
+                    [defId]: {
+                        eaId: defId,
+                        rating,
+                        price: Math.floor(bestPrice),
+                        isExtinct: false,
+                        isObjective: false,
+                        isSbc: false,
+                        name: playerName,
+                        source: "market"
+                    }
+                });
+            }
+        };
 
         const DEFAULT_TIERS = [
             { min: 0, inc: 50 },
@@ -2792,11 +3197,17 @@ GM_addStyle(`
         const MIN_CAP = alignDown(Math.max(0, limits.minimum || 0));
         const MAX_CAP = Math.min(MAX_CAP_LIMIT, alignUp(Math.max(limits.maximum || MAX_CAP_LIMIT, MIN_CAP || 0)));
 
+        // 参照FSU设置searchFeature和type，确保按价格升序返回 / Follow FSU to set searchFeature and type for correct sort order
         const searchViewModel = new UTBucketedItemSearchViewModel();
-        const ensurePlayerFilter = (criteria) => { criteria.defId = [player.definitionId]; return criteria; };
-        const getBaseCriteria = () => { const base = searchViewModel.searchCriteria || {}; searchViewModel.searchCriteria = ensurePlayerFilter(base); return searchViewModel.searchCriteria; };
+        if (typeof ItemSearchFeature !== "undefined") searchViewModel.searchFeature = ItemSearchFeature.MARKET;
+        const baseCriteria = searchViewModel.searchCriteria || {};
+        baseCriteria.defId = [player.definitionId];
+        if (typeof SearchType !== "undefined") baseCriteria.type = SearchType.PLAYER;
+        if (typeof SearchCategory !== "undefined") baseCriteria.category = SearchCategory.ANY;
+        searchViewModel.searchCriteria = baseCriteria;
+
         const buildCriteria = (maxBuy) => {
-            const criteria = getBaseCriteria();
+            const criteria = searchViewModel.searchCriteria;
             if (typeof maxBuy === "number" && Number.isFinite(maxBuy) && maxBuy > 0) criteria.maxBuy = Math.floor(maxBuy);
             else delete criteria.maxBuy;
             return criteria;
@@ -2862,28 +3273,6 @@ GM_addStyle(`
             return { count: priceList.length, min: priceList.length ? minPrice : Number.POSITIVE_INFINITY, item: minItem };
         };
 
-        const refineBetween = async (emptyCap, filledCap) => {
-            let low = Math.max(MIN_CAP, emptyCap || MIN_CAP);
-            let high = Math.max(low + getIncrement(filledCap || low), filledCap);
-            high = Math.min(high, MAX_CAP);
-            let guard = 0;
-            while (low + getIncrement(high) < high && guard < 40) {
-                const rawMid = Math.floor((low + high) / 2);
-                let mid = alignUp(rawMid);
-                if (mid <= low) mid = alignUp(low + getIncrement(low || high));
-                if (mid >= high) mid = alignDown(high - getIncrement(high));
-                if (mid <= low || mid >= high) break;
-                const midEval = await evaluate(mid);
-                guard += 1;
-                if (midEval.count === 0) low = mid;
-                else {
-                    if (midEval.count < MAX_RESULTS) return Number.isFinite(bestPrice) ? bestPrice : Number.isFinite(midEval.min) ? midEval.min : Number.POSITIVE_INFINITY;
-                    high = mid;
-                }
-            }
-            return Number.isFinite(bestPrice) ? bestPrice : Number.POSITIVE_INFINITY;
-        };
-
         const ensureResults = async (cap) => {
             let upper = cap !== null ? alignUp(Math.max(cap, MIN_CAP)) : null;
             let evalResult = await evaluate(upper);
@@ -2916,8 +3305,29 @@ GM_addStyle(`
         const startCap = Number.isFinite(stored) && stored > 0 ? Math.min(MAX_CAP, Math.max(MIN_CAP, stored)) : null;
 
         let { cap: upperCap, lowerBound, eval: upperEval } = await ensureResults(startCap);
-        if (upperEval.count === 0) return null;
-        if (upperEval.count < MAX_RESULTS) return bestListing;
+        if (upperEval.count === 0) {
+            // 市场断货，保存为绝版 / Market extinct, save as extinct
+            const defId = player.definitionId;
+            const rating = player.rating || player._staticData?.rating || 0;
+            const playerName = player._staticData?.name || player._staticData?.lastName || player.name || String(defId);
+            PriceItem({
+                [defId]: {
+                    eaId: defId,
+                    rating,
+                    price: 0,
+                    isExtinct: true,
+                    isObjective: false,
+                    isSbc: false,
+                    name: playerName,
+                    source: "market"
+                }
+            });
+            return null;
+        }
+        if (upperEval.count < MAX_RESULTS) {
+            saveMarketPrice();
+            return bestListing;
+        }
 
         if (!upperCap || !Number.isFinite(upperCap)) {
             upperCap = alignUp(upperEval.min);
@@ -2926,17 +3336,44 @@ GM_addStyle(`
                 const stepped = stepUp(upperCap);
                 upperCap = stepped;
                 upperEval = await evaluate(upperCap);
-                if (upperEval.count === 0) return null;
-                if (upperEval.count < MAX_RESULTS) return bestListing;
+                if (upperEval.count === 0) {
+                    // 市场断货，保存为绝版 / Market extinct, save as extinct
+                    const defId = player.definitionId;
+                    const rating = player.rating || player._staticData?.rating || 0;
+                    const playerName = player._staticData?.name || player._staticData?.lastName || player.name || String(defId);
+                    PriceItem({
+                        [defId]: {
+                            eaId: defId,
+                            rating,
+                            price: 0,
+                            isExtinct: true,
+                            isObjective: false,
+                            isSbc: false,
+                            name: playerName,
+                            source: "market"
+                        }
+                    });
+                    return null;
+                }
+                if (upperEval.count < MAX_RESULTS) {
+                    saveMarketPrice();
+                    return bestListing;
+                }
             }
-            if (upperEval.count < MAX_RESULTS) return bestListing;
+            if (upperEval.count < MAX_RESULTS) {
+                saveMarketPrice();
+                return bestListing;
+            }
         }
 
         let lowerCapValue = lowerBound ?? stepDown(upperCap);
         let lowerEval = await evaluate(lowerCapValue);
         let guardDown = 0;
         while (lowerCapValue > MIN_CAP && lowerEval.count > 0 && guardDown < 50) {
-            if (lowerEval.count < MAX_RESULTS) return bestListing;
+            if (lowerEval.count < MAX_RESULTS) {
+                saveMarketPrice();
+                return bestListing;
+            }
             upperCap = lowerCapValue;
             lowerCapValue = stepDown(lowerCapValue);
             lowerEval = await evaluate(lowerCapValue);
@@ -2944,11 +3381,16 @@ GM_addStyle(`
         }
 
         if (lowerEval.count === 0) {
-            await refineBetween(lowerCapValue, upperCap);
+            // 降到count=0，上一档(upperCap)的bestPrice就是最低价 / count=0 means previous cap holds the lowest price
+            saveMarketPrice();
             return Number.isFinite(bestPrice) ? bestListing : null;
         }
+        // 保存市场价格到缓存 / Save market price to cache
+        saveMarketPrice();
         return bestListing;
     };
+
+    const fetchAndCacheMarketPrice = fetchMarketPrice;
 
     const buyConceptPlayer = async (item, options = {}) => {
         const { suppressNotifications = false } = options;
@@ -2971,7 +3413,6 @@ GM_addStyle(`
             const clubPlayers = await fetchPlayers();
             const alreadyOwned = clubPlayers.some((p) => p.definitionId === item.definitionId);
             if (alreadyOwned) {
-                console.log(`[NoBrainSBC] 跳过已拥有球员 / Skipping already owned player: defId=${item.definitionId}`);
                 return { success: false, reason: "alreadyOwned" };
             }
 
@@ -2981,7 +3422,7 @@ GM_addStyle(`
                 return { success: false, reason: "noCachedPrice" };
             }
 
-            const listing = await fetchMarketPrice(item);
+            const listing = await fetchAndCacheMarketPrice(item);
             const listingPrice = Number(listing?._auction?.buyNowPrice);
             if (!Number.isFinite(listingPrice) || listingPrice <= 0) {
                 notify(L("notify.noActiveListing"), UINotificationType.NEGATIVE);
