@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.34
+// @version      0.35
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       Harvey Hu
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -2868,6 +2868,53 @@ GM_addStyle(`
     UTPaginatedItemListView.prototype.renderItems = function (t) {
         const result = _origRenderItems.call(this, t);
         _autoFetchPlayers(this);
+        return result;
+    };
+
+    // ─── 转会名单自动取价 / Transfer list auto-fetch prices ──────────────────────
+    const _origTransferRenderView = UTTransferListViewController.prototype._renderView;
+    UTTransferListViewController.prototype._renderView = function (...args) {
+        const result = _origTransferRenderView.call(this, ...args);
+
+        // 获取转会名单中的球员 / Get players from transfer list
+        const sectionKeys = [
+            UTTransferSectionListViewModel.SECTION.UNSOLD,
+            UTTransferSectionListViewModel.SECTION.AVAILABLE
+        ];
+
+        const allPlayers = [];
+        for (const key of sectionKeys) {
+            const section = this.getView().getSection(key);
+            if (section?.listRows) {
+                const players = section.listRows
+                    .map(row => row.data)
+                    .filter(item => item?.isPlayer?.() && isPriceOld(item));
+                allPlayers.push(...players);
+            }
+        }
+
+        if (allPlayers.length > 0) {
+            clearTimeout(_autoFetchTimer);
+            _autoFetchTimer = setTimeout(async () => {
+                await loadPriceItems();
+                await fetchAndCachePrices(allPlayers);
+
+                // 刷新价格标签 / Refresh price labels
+                for (const key of sectionKeys) {
+                    const section = this.getView().getSection(key);
+                    if (section?.listRows) {
+                        section.listRows.forEach(row => {
+                            if (!row.data?.isPlayer?.()) return;
+                            const cardView = row.itemComponent || row;
+                            const root = cardView.__root;
+                            if (!root) return;
+                            updatePriceLabel(root, row.data);
+                        });
+                    }
+                }
+            }, 300);
+        }
+
         return result;
     };
 
