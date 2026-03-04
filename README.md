@@ -34,7 +34,7 @@ NoBrain SBC 是一个 Tampermonkey 用户脚本，用于在 EA Sports FC FUT 网
 
 进入任意 SBC 挑战页面后，有两种使用方式：
 
-![SBC 求解界面](images/solve-sbc.png)
+<img src="images/solve-sbc.png" width="50%" />
 
 #### 方式一：直接求解（使用俱乐部球员）
 
@@ -68,7 +68,7 @@ NoBrain SBC 是一个 Tampermonkey 用户脚本，用于在 EA Sports FC FUT 网
 - 联赛筛选规则
 - 排除球员列表
 
-![设置面板](images/sbc-setting.png)
+<img src="images/sbc-setting.png" width="50%" />
 
 ### 注意事项
 
@@ -118,7 +118,7 @@ NoBrain SBC is a Tampermonkey userscript that automatically solves SBC (Squad Bu
 
 After navigating to any SBC challenge page, there are two ways to use the script:
 
-![SBC Solver Interface](images/solve-sbc.png)
+<img src="images/solve-sbc.png" width="50%" />
 
 #### Method 1: Direct Solve (Using Club Players)
 
@@ -152,7 +152,7 @@ Click "Settings" button to configure:
 - League filter rules
 - Excluded players list
 
-![Settings Panel](images/sbc-setting.png)
+<img src="images/sbc-setting.png" width="50%" />
 
 ### Notes
 
