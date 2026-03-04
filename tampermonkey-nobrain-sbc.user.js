@@ -1,9 +1,12 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.35
+// @version      0.36
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
-// @author       Harvey Hu
+// @author       harveyhu2012
+// @homepage     https://github.com/harveyhu2012/nobrain-sbc
+// @supportURL   https://github.com/harveyhu2012/nobrain-sbc/issues
+// @license      MIT
 // @match        https://www.easports.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
 // @grant        GM_addStyle
