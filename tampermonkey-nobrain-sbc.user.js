@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.36
+// @version      0.37
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       harveyhu2012
 // @homepage     https://github.com/harveyhu2012/nobrain-sbc
@@ -362,6 +362,11 @@ GM_addStyle(`
         "param.innerRestarts":          ["内部重启次数", "Inner Restarts"],
         "param.ilsNoImproveLimit":      ["ILS无改善上限", "ILS No-Improve Limit"],
         "param.maxPriceIncrements":     ["购买最大加价步数", "Max Price Increment Steps"],
+        "param.ratingWindowCapLow":     ["低分SBC窗口上限(≤81)", "Low-Rating SBC Window Cap (≤81)"],
+        "param.ratingWindowFloorLow":   ["低分SBC窗口下限(≤81)", "Low-Rating SBC Window Floor (≤81)"],
+        "param.ratingWindowExpandHigh": ["高分SBC上限扩展(≥82)", "High-Rating SBC Cap Expand (≥82)"],
+        "param.ratingWindowExpandLow":  ["高分SBC下限扩展(≥82)", "High-Rating SBC Floor Expand (≥82)"],
+        "param.ratingPriceMultiplier":  ["高分球员价格倍率", "High-Rating Price Multiplier"],
         "param.showPrices":             ["显示球员价格", "Show Player Prices"],
         "param.priceExpiry":            ["价格缓存时间（分钟）", "Price Cache Duration (min)"],
         "param.livePriceBeforeSolve":   ["虚拟求解前实时取价", "Live Price Before Solve"],
@@ -963,6 +968,11 @@ GM_addStyle(`
         ilsNoImproveLimit: 15,
         maxPriceIncrements: 1,
         priceExpiry: 60,
+        ratingWindowCapLow: 83,        // 低分SBC(≤81)窗口上限
+        ratingWindowFloorLow: 0,       // 低分SBC(≤81)窗口下限
+        ratingWindowExpandHigh: 3,     // 高分SBC(≥82)上限扩展：target + expand
+        ratingWindowExpandLow: 4,      // 高分SBC(≥82)下限扩展：target - expand
+        ratingPriceMultiplier: 1.5,    // 高分球员价格倍率指数基数
         apiProxy: "",
         livePriceBeforeSolve: false,
         leaguePenalties: [
@@ -1028,6 +1038,11 @@ GM_addStyle(`
             ["innerRestarts", L("param.innerRestarts"), 1, 20],
             ["ilsNoImproveLimit", L("param.ilsNoImproveLimit"), 1, 100],
             ["maxPriceIncrements", L("param.maxPriceIncrements"), 0, 20],
+            ["ratingWindowCapLow", L("param.ratingWindowCapLow"), 0, 99],
+            ["ratingWindowFloorLow", L("param.ratingWindowFloorLow"), 0, 99],
+            ["ratingWindowExpandHigh", L("param.ratingWindowExpandHigh"), 0, 99],
+            ["ratingWindowExpandLow", L("param.ratingWindowExpandLow"), 0, 99],
+            ["ratingPriceMultiplier", L("param.ratingPriceMultiplier"), 1.0, 3.0],
         ];
         const UI_TOGGLES = [
             ["showPrices", L("param.showPrices")],
@@ -2104,10 +2119,31 @@ GM_addStyle(`
                 return;
             }
 
-            // 迭代评分窗口：从紧窗口[target-1, target+1]开始，每次各扩展1直到找到可行解 / Iterative rating window: start tight [target-1, target+1], expand by 1 each side until solution found
+            // 评分窗口设置 / Rating window settings
+            // 81分及以下：固定窗口上下限（默认上限83，下限0）
+            // 82分及以上：基于目标值扩展（默认上限+3，下限-4）
             const ratingReq = sbcData.constraints.find(r => r.requirementKey === "TEAM_RATING" && r.scope === "GREATER");
             const ratingTarget = ratingReq ? ratingReq.eligibilityValues[0] : 0;
-            const maxFloorDrop = ratingTarget >= 84 ? 5 : (ratingTarget > 0 ? 99 : 0);
+            const isLowRating = ratingTarget > 0 && ratingTarget <= 81;
+            const isHighRating = ratingTarget >= 82;
+            
+            // 计算窗口上下限 / Calculate window cap and floor
+            let windowCap, windowFloor;
+            if (isLowRating) {
+                // 低分SBC：使用固定窗口 / Low-rating SBC: use fixed window
+                windowCap = Number(getOwnSettings().ratingWindowCapLow ?? SETTINGS_DEFAULTS.ratingWindowCapLow) || 83;
+                windowFloor = Number(getOwnSettings().ratingWindowFloorLow ?? SETTINGS_DEFAULTS.ratingWindowFloorLow) || 0;
+            } else if (isHighRating) {
+                // 高分SBC：基于目标扩展 / High-rating SBC: expand from target
+                const expandHigh = Number(getOwnSettings().ratingWindowExpandHigh ?? SETTINGS_DEFAULTS.ratingWindowExpandHigh) || 3;
+                const expandLow = Number(getOwnSettings().ratingWindowExpandLow ?? SETTINGS_DEFAULTS.ratingWindowExpandLow) || 4;
+                windowCap = ratingTarget + expandHigh;
+                windowFloor = Math.max(0, ratingTarget - expandLow);
+            } else {
+                // 无评分要求：不限制 / No rating requirement: no limit
+                windowCap = 99;
+                windowFloor = 0;
+            }
 
             // 无条件注入当前阵容中的虚拟球员到可用库（价格 × conceptPremium%），使求解器能用真实球员替换
             // Unconditionally inject concept players from current squad into pool (price × conceptPremium%) so solver can replace them with real players
@@ -2163,8 +2199,25 @@ GM_addStyle(`
                 }
             }
 
+            // 应用高分球员价格指数调整 / Apply high-rating price multiplier
+            // 83分为基准（倍率1.0），每高1分乘以ratingPriceMultiplier，低分球员不调整
+            // E.g., ratingPriceMultiplier=1.5: 83=1.0x, 84=1.5x, 85=2.25x, 86=3.375x...
+            {
+                const ratingPriceMult = Number(getOwnSettings().ratingPriceMultiplier ?? SETTINGS_DEFAULTS.ratingPriceMultiplier) || 1.0;
+                if (ratingPriceMult > 1.0) {
+                    for (let i = 0; i < players.length; i++) {
+                        const p = players[i];
+                        if (p.rating > 83) {
+                            const exponent = p.rating - 83;
+                            const multiplier = Math.pow(ratingPriceMult, exponent);
+                            players[i] = { ...p, price: Math.round(p.price * multiplier) };
+                        }
+                    }
+                }
+            }
+
             let bestResult = { feasible: false, cost: Infinity };
-            let bestCappedPlayers = players;
+            let bestCappedPlayers = null;  // 初始化为null，确保必须通过窗口过滤后才能使用
 
             // 检查当前阵容是否已满足约束 / Check if current squad already satisfies constraints
             const playerById = new Map(players.map(p => [p.id, p]));
@@ -2172,60 +2225,66 @@ GM_addStyle(`
             if (checkConstraints(currentSquad, sbcData.formation, sbcData.constraints)) {
                 bestResult = { feasible: true, cost: squadCost(currentSquad), squad: currentSquad, lsId: 0 };
                 bestCappedPlayers = ratingTarget > 0
-                    ? players.filter(p => p.rating >= ratingTarget - maxFloorDrop)
+                    ? players.filter(p => p.rating <= windowCap && p.rating >= windowFloor)
                     : players;
             }
 
             // 寻找能产生可行解的最小评分窗口 / Find the minimum window that yields a feasible solution
             const maxPlayerRating = ratingTarget > 0 ? Math.max(...players.map(p => p.rating)) : 99;
-            if (!bestResult.feasible) for (let expand = 0; expand <= 99; expand++) {
-                const cap = ratingTarget > 0 ? ratingTarget + 1 + expand : 99;
-                if (ratingTarget > 0 && expand > 0 && cap > maxPlayerRating) break;
-                const floorDrop = ratingTarget > 0 ? Math.min(expand, maxFloorDrop) : 0;
-                const ratingFloor = ratingTarget > 0 ? ratingTarget - 1 - floorDrop : 0;
-                const cappedPlayers = ratingTarget > 0 ? players.filter(p => p.rating <= cap && p.rating >= ratingFloor) : players;
-                const squad = greedySolve(cappedPlayers, sbcData);
-                const filled = squad.filter(Boolean);
-                const { totalChem } = calcChemistry(squad);
-                const uniqueLeagues = new Set(filled.map(p => p.leagueId)).size;
-                const uniqueClubs = new Set(filled.map(p => p.teamId)).size;
-                const maxNation = Math.max(...Object.values(filled.reduce((a, p) => { a[p.nationId] = (a[p.nationId]||0)+1; return a; }, {})));
-                const goldCount = filled.filter(p => p.ratingTier === 3).length;
-                const tiers = filled.reduce((a, p) => { a[p.ratingTier] = (a[p.ratingTier]||0)+1; return a; }, {});
-                const pq = sbcData.constraints.find(r => r.requirementKey === "PLAYER_QUALITY");
-                const poolTiers = cappedPlayers.reduce((a, p) => { a[p.ratingTier] = (a[p.ratingTier]||0)+1; return a; }, {});
-                const lsProgressCb = t => {
-                    const m = t.match(/restart (\d+)\/(\d+), iter (\d+)\/(\d+)/);
-                    if (m) {
-                        const pct = (((parseInt(m[1])-1)*parseInt(m[4]) + parseInt(m[3])) / (parseInt(m[2])*parseInt(m[4])) * 100).toFixed(1);
-                        updateProgress(L("progress.pct", pct));
-                    } else {
-                        updateProgress(t);
+            const lsProgressCb = t => {
+                const m = t.match(/restart (\d+)\/(\d+), iter (\d+)\/(\d+)/);
+                if (m) {
+                    const pct = (((parseInt(m[1])-1)*parseInt(m[4]) + parseInt(m[3])) / (parseInt(m[2])*parseInt(m[4])) * 100).toFixed(1);
+                    updateProgress(L("progress.pct", pct));
+                } else {
+                    updateProgress(t);
+                }
+            };
+
+            if (!bestResult.feasible) {
+                if (isLowRating) {
+                    // 低分SBC(≤81)：先用(下限,81)，再(下限,82)，最后(下限,83)，仍无解则失败
+                    // Low-rating SBC: try (floor,81), then (floor,82), finally (floor,83), fail if still no solution
+                    const floor = windowFloor;
+                    for (let cap = 81; cap <= windowCap; cap++) {
+                        const cappedPlayers = players.filter(p => p.rating <= cap && p.rating >= floor);
+                        if (cappedPlayers.length < 11) continue;
+                        const squad = greedySolve(cappedPlayers, sbcData);
+                        const result = await localSearch(squad, cappedPlayers, sbcData, hillClimbMaxIter, lsProgressCb, innerRestarts);
+                        if (result.feasible) {
+                            bestCappedPlayers = cappedPlayers;
+                            bestResult = result;
+                            break;
+                        }
                     }
-                };
-                const result = await localSearch(squad, cappedPlayers, sbcData, hillClimbMaxIter, lsProgressCb, innerRestarts);
-                if (result.feasible) {
-                    if (result.cost < bestResult.cost) { bestCappedPlayers = cappedPlayers; bestResult = result; }
-                    // 再尝试一次扩展以用更大球员池找到更便宜的解 / Try one more expansion to find cheaper solution with wider player pool
-                    const cap2 = ratingTarget > 0 ? cap + 1 : 99;
-                    const floorDrop2 = ratingTarget > 0 ? Math.min(expand + 1, maxFloorDrop) : 0;
-                    const ratingFloor2 = ratingTarget > 0 ? ratingTarget - 1 - floorDrop2 : 0;
-                    const cappedPlayers2 = ratingTarget > 0 ? players.filter(p => p.rating <= cap2 && p.rating >= ratingFloor2) : players;
-                    const squad2 = greedySolve(cappedPlayers2, sbcData);
-                    const result2 = await localSearch(squad2, cappedPlayers2, sbcData, hillClimbMaxIter, lsProgressCb, innerRestarts);
-                    if (result2.feasible && result2.cost < bestResult.cost) { bestCappedPlayers = cappedPlayers2; bestResult = result2; }
-                    // 找到可行解后，扩展球员池到完整范围，让低分球员参与降费优化
-                    // After finding feasible solution, expand pool to full range so cheap low-rated players can reduce cost
-                    if (bestResult.feasible && ratingTarget > 0) {
-                        // 找到可行解后去掉评分限制，ILS阶段用全部球员降费
-                        // After feasible solution found, remove rating window for ILS cost optimization
-                        bestCappedPlayers = players;
+                } else if (isHighRating) {
+                    // 高分SBC(≥82)：从(target-2, target+1)开始，逐步扩展，但不超过设置的上下限
+                    // High-rating SBC: start from (target-2, target+1), expand but stay within settings limits
+                    for (let expand = 0; expand <= 99; expand++) {
+                        const cap = ratingTarget + 1 + expand;
+                        const floor = ratingTarget - 2 - expand;
+                        // 检查是否超出设置范围 / Check if exceeds settings limits
+                        if (cap > windowCap && floor < windowFloor) break;
+                        const actualCap = Math.min(cap, windowCap);
+                        const actualFloor = Math.max(floor, windowFloor);
+                        const cappedPlayers = players.filter(p => p.rating <= actualCap && p.rating >= actualFloor);
+                        if (cappedPlayers.length < 11) continue;
+                        const squad = greedySolve(cappedPlayers, sbcData);
+                        const result = await localSearch(squad, cappedPlayers, sbcData, hillClimbMaxIter, lsProgressCb, innerRestarts);
+                        if (result.feasible) {
+                            bestCappedPlayers = cappedPlayers;
+                            bestResult = result;
+                            break;
+                        }
                     }
-                    const logSquad = (label, r) => {
-                        const { totalChem } = calcChemistry(r.squad, sbcData.formation);
-                    };
-                    logSquad('best after expand', bestResult);
-                    break;
+                } else {
+                    // 无评分要求：使用所有球员 / No rating requirement: use all players
+                    const squad = greedySolve(players, sbcData);
+                    const result = await localSearch(squad, players, sbcData, hillClimbMaxIter, lsProgressCb, innerRestarts);
+                    if (result.feasible) {
+                        bestCappedPlayers = players;  // 无评分要求时确实使用全部球员
+                        bestResult = result;
+                    }
                 }
             }
 
