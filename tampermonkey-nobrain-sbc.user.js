@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.40
+// @version      0.41
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       harveyhu2012
 // @homepage     https://github.com/harveyhu2012/nobrain-sbc
@@ -1807,6 +1807,64 @@ GM_addStyle(`
                         break;
                     }
                     bestSquad[slot] = prev;
+                }
+            }
+        }
+
+        // 阶段3：位置优化——尽量让真实球员在能踢的位置上（仅当有化学值要求时）
+        // Phase 3: Position optimization - try to put real players in position-matched slots (only when chemistry required)
+        if (strictPosition || chemTarget > 0) {
+            let positionImproved = true;
+            while (positionImproved) {
+                positionImproved = false;
+                
+                // 遍历所有槽位，找到不在位置上的真实球员
+                // Iterate all slots, find real players not in position
+                for (let slotA = 0; slotA < 11; slotA++) {
+                    if (brickIndices.includes(slotA) || formation[slotA] === -1) continue;
+                    
+                    const playerA = bestSquad[slotA];
+                    if (!playerA || playerA.concept) continue;  // 跳过虚拟球员 / Skip concept players
+                    
+                    const slotPosA = formation[slotA];
+                    // 检查球员A是否在能踢的位置上 / Check if playerA is in a valid position
+                    if (playerA.possiblePositions.includes(slotPosA)) continue;  // 已经在位置上 / Already in position
+                    
+                    // 球员A不在位置上，尝试找一个可以交换的槽位
+                    // PlayerA not in position, try to find a slot to swap
+                    for (let slotB = 0; slotB < 11; slotB++) {
+                        if (slotB === slotA || brickIndices.includes(slotB) || formation[slotB] === -1) continue;
+                        
+                        const playerB = bestSquad[slotB];
+                        if (!playerB) continue;
+                        
+                        const slotPosB = formation[slotB];
+                        
+                        // 检查交换是否有意义：
+                        // 1. 球员A能踢slotB的位置，且
+                        // 2. slotB是虚拟球员，或者球员B也不在位置上
+                        // Check if swap makes sense:
+                        // 1. PlayerA can play in slotB, and
+                        // 2. slotB is concept player, or playerB is also out of position
+                        if (!playerA.possiblePositions.includes(slotPosB)) continue;
+                        
+                        const playerBInPosition = playerB.possiblePositions.includes(slotPosB);
+                        if (playerBInPosition && !playerB.concept) continue;  // 球员B是真实球员且在位置上，不交换
+                        
+                        // 尝试交换 / Try swap
+                        const testSquad = [...bestSquad];
+                        testSquad[slotA] = playerB;
+                        testSquad[slotB] = playerA;
+                        
+                        if (checkConstraints(testSquad, formation, constraints)) {
+                            // 交换后仍满足要求，执行交换
+                            // Swap valid, execute swap
+                            bestSquad[slotA] = playerB;
+                            bestSquad[slotB] = playerA;
+                            positionImproved = true;
+                            break;  // 球员A已处理，跳出内层循环
+                        }
+                    }
                 }
             }
         }
