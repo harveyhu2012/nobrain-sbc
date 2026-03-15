@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.38
+// @version      0.40
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       harveyhu2012
 // @homepage     https://github.com/harveyhu2012/nobrain-sbc
@@ -2503,16 +2503,34 @@ GM_addStyle(`
                         // Wait for FSU's finally (hideLoader) to run before starting solver
                         await new Promise(r => setTimeout(r, 100));
 
-                        // 实时取价，确保价格最新（如果设置启用）/ Live price fetch if enabled
-                        const livePriceEnabled = getOwnSettings().livePriceBeforeSolve ?? SETTINGS_DEFAULTS.livePriceBeforeSolve;
-                        if (livePriceEnabled) {
-                            const squad = _challenge.squad;
-                            if (squad) {
-                                try {
-                                    await fetchLivePricesForSquad(squad, { refreshLabels: false });
-                                } catch (e) {
-                                    // 取价失败不影响求解，继续执行 / Price fetch failure doesn't block solving
-                                    console.warn("[虚拟求解] 实时取价失败:", e);
+                        // 确保虚拟球员有价格 / Ensure concept players have prices
+                        const squad = _challenge.squad;
+                        if (squad) {
+                            const conceptPlayers = squad._players.slice(0, 11)
+                                .map(m => m._item)
+                                .filter(item => item?.concept && item.definitionId);
+                            
+                            if (conceptPlayers.length > 0) {
+                                const livePriceEnabled = getOwnSettings().livePriceBeforeSolve ?? SETTINGS_DEFAULTS.livePriceBeforeSolve;
+                                
+                                if (livePriceEnabled) {
+                                    // 实时取价 / Live price fetch
+                                    try {
+                                        await fetchLivePricesForSquad(squad, { refreshLabels: false });
+                                    } catch (e) {
+                                        console.warn("[虚拟求解] 实时取价失败:", e);
+                                    }
+                                } else {
+                                    // 通过 fut.gg/futnext 取价（仅缺失或过期的）/ Fetch via fut.gg/futnext (missing or stale only)
+                                    await loadPriceItems();
+                                    const needsPrice = conceptPlayers.filter(item => !cachedPriceItems[item.definitionId]?.price);
+                                    if (needsPrice.length > 0) {
+                                        try {
+                                            await fetchAndCachePrices(needsPrice, null, false);
+                                        } catch (e) {
+                                            console.warn("[虚拟求解] 虚拟球员取价失败:", e);
+                                        }
+                                    }
                                 }
                             }
                         }
