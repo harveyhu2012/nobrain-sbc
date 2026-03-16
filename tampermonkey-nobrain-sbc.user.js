@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.41
+// @version      0.42
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       harveyhu2012
 // @homepage     https://github.com/harveyhu2012/nobrain-sbc
@@ -492,6 +492,44 @@ GM_addStyle(`
         },
         left() {
             return _appMain?._rootViewController?.currentController?.currentController?.currentController?.leftController;
+        }
+    };
+
+    // ─── PC端和手机端兼容函数 / PC and Mobile Compatibility Functions ─────────────
+    /**
+     * 获取当前SBC挑战赛对象（兼容PC端和手机端）/ Get current SBC challenge (compatible with PC and mobile)
+     * @param {Object} controller - 控制器对象，默认使用 cntlr.current() / Controller object, defaults to cntlr.current()
+     * @returns {Object|null} 挑战赛对象 / Challenge object
+     */
+    const getCurrentChallenge = (controller = null) => {
+        const ctrl = controller || cntlr.current();
+        if (!ctrl) return null;
+        
+        if (isPhone()) {
+            // 手机端：直接从 controller._challenge 获取 / Mobile: get from controller._challenge
+            return ctrl._challenge || null;
+        } else {
+            // PC端：通过 _challengeId 从 _set.challenges 获取 / PC: get from _set.challenges using _challengeId
+            const challengeId = ctrl._challengeId;
+            return challengeId ? ctrl._set?.challenges?.get(challengeId) : null;
+        }
+    };
+
+    /**
+     * 获取当前SBC阵容对象（兼容PC端和手机端）/ Get current SBC squad (compatible with PC and mobile)
+     * @param {Object} controller - 控制器对象，默认使用 cntlr.current() / Controller object, defaults to cntlr.current()
+     * @returns {Object|null} 阵容对象 / Squad object
+     */
+    const getCurrentSquad = (controller = null) => {
+        const ctrl = controller || cntlr.current();
+        if (!ctrl) return null;
+        
+        if (isPhone()) {
+            // 手机端：从 _challenge.squad 或 squadContext.squad 获取 / Mobile: get from _challenge.squad or squadContext.squad
+            return ctrl._challenge?.squad || ctrl.squadContext?.squad || null;
+        } else {
+            // PC端：从 controller._squad 获取 / PC: get from controller._squad
+            return ctrl._squad || null;
         }
     };
 
@@ -2437,7 +2475,7 @@ GM_addStyle(`
             }
 
             // 构建saveSquad所需的球员列表 / Build solution player list for saveSquad
-            const _squad = cntlr.current()?._squad || cntlr.current()?._challenge?.squad;
+            const _squad = getCurrentSquad();
             if (!_squad) {
                 hideLoader();
                 showNotification(L("notify.noSquad"), UINotificationType.NEGATIVE);
@@ -2483,7 +2521,7 @@ GM_addStyle(`
         const response = squadDetailPanelViewInit.call(this, ...args);
 
         const offlineBtn = createButton("idOfflineSolveSbc", L("btn.solve"), async () => {
-            const { _challenge } = cntlr.current();
+            const _challenge = getCurrentChallenge();
             if (!_challenge) {
                 showNotification(L("notify.noChallenge"), UINotificationType.NEGATIVE);
                 return;
@@ -2498,8 +2536,7 @@ GM_addStyle(`
         let conceptSolveBtn = null;
         if (isFSURunning()) {
             conceptSolveBtn = createButton("idConceptSolveSbc", L("btn.conceptSolve"), async () => {
-                const controller = cntlr.current();
-                const _challenge = controller?._challenge;
+                const _challenge = getCurrentChallenge();
                 if (!_challenge) {
                     showNotification(L("notify.noChallenge"), UINotificationType.NEGATIVE);
                     return;
@@ -3685,8 +3722,7 @@ GM_addStyle(`
     };
 
     const getConceptsInSquad = () => {
-        const controller = cntlr.current();
-        const _squad = controller?._squad || controller?._challenge?.squad;
+        const _squad = getCurrentSquad();
         const squadPlayers = Array.isArray(_squad?._players) ? _squad._players : [];
         return squadPlayers.slice(0, 11).map((slot) => slot?._item).filter((item) => item && item.concept);
     };
