@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.44
+// @version      0.45
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       harveyhu2012
 // @homepage     https://github.com/harveyhu2012/nobrain-sbc
@@ -3673,7 +3673,10 @@ GM_addStyle(`
                 if (bidAttempt && typeof bidAttempt.observe === "function") {
                     return new Promise((resolve) => {
                         bidAttempt.observe({}, async (_obs, response) => {
-                            resolve({ success: response?.success !== false });
+                            // 检查出价是否成功 / Check if bid was successful
+                            const hasError = response?.error || response?.status === 400 || response?.success === false;
+                            const success = !hasError;
+                            resolve({ success, response });
                         });
                     });
                 }
@@ -3695,22 +3698,64 @@ GM_addStyle(`
                 return { success: false, reason: "bidFailed", price: lowestPrice, priceLabel };
             }
 
-            // 出价被拒，按照 maxIncrements 设置逐步加价重试 / Bid rejected, increment and retry per maxIncrements setting
+            // 出价被拒，重新搜索市场并逐步加价重试 / Bid rejected, re-search market and increment retry
+            // 最多尝试 maxIncrements + 1 次（包括不加价的第一次重试）
+            // Max attempts: maxIncrements + 1 (including first retry without increment)
             let currentPrice = lowestPrice;
-            for (let i = 0; i < maxIncrements; i++) {
-                const nextPrice = UTCurrencyInputControl?.getIncrementAboveVal?.(currentPrice);
-                if (typeof nextPrice !== "number" || nextPrice <= currentPrice) break;
-                if (nextPrice > maxAllowedPrice) break;
+            
+            // 重新搜索市场的辅助函数 / Helper to re-search market
+            const searchFreshListing = (maxPrice) => {
+                return new Promise((resolve) => {
+                    services.Item.clearTransferMarketCache();
+                    const searchViewModel = new UTBucketedItemSearchViewModel();
+                    if (typeof ItemSearchFeature !== "undefined") searchViewModel.searchFeature = ItemSearchFeature.MARKET;
+                    const criteria = searchViewModel.searchCriteria || {};
+                    criteria.defId = [item.definitionId];
+                    if (typeof SearchType !== "undefined") criteria.type = SearchType.PLAYER;
+                    if (typeof SearchCategory !== "undefined") criteria.category = SearchCategory.ANY;
+                    if (typeof maxPrice === "number" && Number.isFinite(maxPrice) && maxPrice > 0) {
+                        criteria.maxBuy = Math.floor(maxPrice);
+                    }
+                    services.Item.searchTransferMarket(criteria, 1).observe(undefined, (_s, response) => {
+                        const items = Array.isArray(response?.data?.items)
+                            ? response.data.items.filter((it) => it._auction && it._auction.tradeState === "active")
+                            : [];
+                        items.sort((a, b) => (a._auction?.buyNowPrice || Infinity) - (b._auction?.buyNowPrice || Infinity));
+                        resolve(items[0] || null);
+                    });
+                });
+            };
+            
+            // 最多尝试 maxIncrements + 1 次 / Max attempts: maxIncrements + 1
+            for (let attempt = 0; attempt <= maxIncrements; attempt++) {
+                // 重新搜索市场获取最新挂牌 / Re-search market for fresh listing
+                const freshListing = await searchFreshListing(currentPrice);
+                if (!freshListing) {
+                    // 没有找到挂牌，尝试加价 / No listing found, try increment
+                    const nextPrice = UTCurrencyInputControl?.getIncrementAboveVal?.(currentPrice);
+                    if (typeof nextPrice === "number" && nextPrice > currentPrice && nextPrice <= maxAllowedPrice) {
+                        currentPrice = nextPrice;
+                        continue;
+                    }
+                    break;
+                }
                 
-                currentPrice = nextPrice;
-                const currentPriceLabel = currentPrice.toLocaleString();
+                const freshPrice = freshListing._auction.buyNowPrice;
+                if (freshPrice > maxAllowedPrice) break;
                 
-                bidResult = await doBid(listing, currentPrice);
+                const freshPriceLabel = freshPrice.toLocaleString();
+                bidResult = await doBid(freshListing, freshPrice);
                 if (bidResult.success) {
                     try { await moveUnassignedToClub(); } catch (err) { console.error("[NoBrainSBC] moveUnassignedToClub error", err); }
-                    notify(L("notify.buySuccess", currentPriceLabel), UINotificationType.POSITIVE);
-                    return { success: true, reason: "success", price: currentPrice, priceLabel: currentPriceLabel };
+                    notify(L("notify.buySuccess", freshPriceLabel), UINotificationType.POSITIVE);
+                    return { success: true, reason: "success", price: freshPrice, priceLabel: freshPriceLabel };
                 }
+                
+                // 出价失败，尝试加价 / Bid failed, try increment
+                const nextPrice = UTCurrencyInputControl?.getIncrementAboveVal?.(freshPrice);
+                if (typeof nextPrice !== "number" || nextPrice <= freshPrice) break;
+                if (nextPrice > maxAllowedPrice) break;
+                currentPrice = nextPrice;
             }
 
             // 所有尝试都失败 / All attempts failed
