@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.42
+// @version      0.43
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       harveyhu2012
 // @homepage     https://github.com/harveyhu2012/nobrain-sbc
@@ -370,6 +370,7 @@ GM_addStyle(`
         "param.showPrices":             ["显示球员价格", "Show Player Prices"],
         "param.priceExpiry":            ["价格缓存时间（分钟）", "Price Cache Duration (min)"],
         "param.livePriceBeforeSolve":   ["虚拟求解前实时取价", "Live Price Before Solve"],
+        "param.incrementOnBidRejected": ["出价被拒时逐步加价", "Increment Price on Bid Rejected"],
         "param.apiProxy":               ["自定义 API 代理（留空使用内置随机代理）", "Custom API Proxy (leave blank for built-in)"],
         "settings.tabLeague":           ["联赛筛选", "League Filter"],
         "param.leaguePenalty.hint":     ["指定联赛球员的价格乘以系数，求解器会尽量避免使用，但必要时仍可使用。", "Multiply price of players from specified leagues. Solver avoids them but can still use them."],
@@ -1013,6 +1014,7 @@ GM_addStyle(`
         ratingPriceMultiplier: 1.5,    // 高分球员价格倍率指数基数
         apiProxy: "",
         livePriceBeforeSolve: false,
+        incrementOnBidRejected: true,
         leaguePenalties: [
             {leagueId: 13, minRating: 77, maxRating: 82},
             {leagueId: 53, minRating: 77, maxRating: 82},
@@ -1085,6 +1087,7 @@ GM_addStyle(`
         const UI_TOGGLES = [
             ["showPrices", L("param.showPrices")],
             ["livePriceBeforeSolve", L("param.livePriceBeforeSolve")],
+            ["incrementOnBidRejected", L("param.incrementOnBidRejected")],
         ];
         const UI_NUMBERS = [
             ["priceExpiry", L("param.priceExpiry"), 1, 1440],
@@ -3664,25 +3667,55 @@ GM_addStyle(`
                 return { success: false, reason: "priceAboveBaseline", price: lowestPrice, priceLabel, baseline: maxAllowedPrice, baselineLabel: maxAllowedPrice.toLocaleString() };
             }
 
-            const bidAttempt = services.Item.bid(listing, lowestPrice);
-            if (bidAttempt && typeof bidAttempt.observe === "function") {
-                return await new Promise((resolve) => {
-                    bidAttempt.observe({}, async (_obs, response) => {
-                        const success = response?.success !== false;
-                        if (success) {
-                            try { await moveUnassignedToClub(); } catch (err) { console.error("[NoBrainSBC] moveUnassignedToClub error", err); }
-                        }
-                        notify(
-                            success ? L("notify.buySuccess", priceLabel) : L("notify.buyFailed"),
-                            success ? UINotificationType.POSITIVE : UINotificationType.NEGATIVE
-                        );
-                        resolve({ success, reason: success ? "success" : "bidFailed", price: lowestPrice, priceLabel });
+            // 执行出价的辅助函数 / Helper function to execute bid
+            const doBid = (targetListing, targetPrice) => {
+                const bidAttempt = services.Item.bid(targetListing, targetPrice);
+                if (bidAttempt && typeof bidAttempt.observe === "function") {
+                    return new Promise((resolve) => {
+                        bidAttempt.observe({}, async (_obs, response) => {
+                            resolve({ success: response?.success !== false });
+                        });
                     });
-                });
+                }
+                return Promise.resolve({ success: true });
+            };
+
+            // 第一次尝试出价 / First bid attempt
+            let bidResult = await doBid(listing, lowestPrice);
+            if (bidResult.success) {
+                try { await moveUnassignedToClub(); } catch (err) { console.error("[NoBrainSBC] moveUnassignedToClub error", err); }
+                notify(L("notify.buySuccess", priceLabel), UINotificationType.POSITIVE);
+                return { success: true, reason: "success", price: lowestPrice, priceLabel };
             }
 
-            notify(L("notify.buyAttempted", priceLabel), UINotificationType.POSITIVE);
-            return { success: true, reason: "attempted", price: lowestPrice, priceLabel };
+            // 检查是否启用了出价被拒时逐步加价 / Check if increment on bid rejected is enabled
+            const shouldIncrementOnReject = getOwnSettings().incrementOnBidRejected ?? SETTINGS_DEFAULTS.incrementOnBidRejected;
+            if (!shouldIncrementOnReject) {
+                notify(L("notify.buyFailed"), UINotificationType.NEGATIVE);
+                return { success: false, reason: "bidFailed", price: lowestPrice, priceLabel };
+            }
+
+            // 出价被拒，按照 maxIncrements 设置逐步加价重试 / Bid rejected, increment and retry per maxIncrements setting
+            let currentPrice = lowestPrice;
+            for (let i = 0; i < maxIncrements; i++) {
+                const nextPrice = UTCurrencyInputControl?.getIncrementAboveVal?.(currentPrice);
+                if (typeof nextPrice !== "number" || nextPrice <= currentPrice) break;
+                if (nextPrice > maxAllowedPrice) break;
+                
+                currentPrice = nextPrice;
+                const currentPriceLabel = currentPrice.toLocaleString();
+                
+                bidResult = await doBid(listing, currentPrice);
+                if (bidResult.success) {
+                    try { await moveUnassignedToClub(); } catch (err) { console.error("[NoBrainSBC] moveUnassignedToClub error", err); }
+                    notify(L("notify.buySuccess", currentPriceLabel), UINotificationType.POSITIVE);
+                    return { success: true, reason: "success", price: currentPrice, priceLabel: currentPriceLabel };
+                }
+            }
+
+            // 所有尝试都失败 / All attempts failed
+            notify(L("notify.buyFailed"), UINotificationType.NEGATIVE);
+            return { success: false, reason: "bidFailed", price: currentPrice, priceLabel: currentPrice.toLocaleString() };
         } catch (error) {
             console.error("[NoBrainSBC] buyConceptPlayer error", error);
             notify(L("notify.buyEncounterError"), UINotificationType.NEGATIVE);
