@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.43
+// @version      0.44
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       harveyhu2012
 // @homepage     https://github.com/harveyhu2012/nobrain-sbc
@@ -2825,7 +2825,7 @@ GM_addStyle(`
 
     // ─── 实时取价功能 / Live price fetch function ─────────────────────────────────
     /**
-     * 对阵容中的所有球员进行实时取价 / Fetch live prices for all players in squad
+     * 对阵容中的虚拟球员进行实时取价 / Fetch live prices for concept players in squad
      * @param {Object} squad - 阵容对象 / Squad object
      * @param {Object} options - 可选配置 / Optional config
      * @param {boolean} options.refreshLabels - 是否刷新价格标签 / Whether to refresh price labels
@@ -2841,10 +2841,10 @@ GM_addStyle(`
 
         const fieldPlayers = squad.getFieldPlayers();
 
-        // 过滤出有效球员（非砖块、有 item）/ Filter valid players (non-brick, has item)
+        // 过滤出虚拟球员（非砖块、有 item、是虚拟球员）/ Filter concept players (non-brick, has item, is concept)
         const allItems = fieldPlayers
             .map((player, index) => ({ player, index }))
-            .filter(({ player }) => !player.isBrick() && player.item && player.item.definitionId);
+            .filter(({ player }) => !player.isBrick() && player.item && player.item.definitionId && player.item.concept);
 
         if (!allItems.length) {
             throw new Error(L("notify.noConcepts"));
