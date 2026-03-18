@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.45
+// @version      0.46
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       harveyhu2012
 // @homepage     https://github.com/harveyhu2012/nobrain-sbc
@@ -370,6 +370,7 @@ GM_addStyle(`
         "param.showPrices":             ["显示球员价格", "Show Player Prices"],
         "param.priceExpiry":            ["价格缓存时间（分钟）", "Price Cache Duration (min)"],
         "param.livePriceBeforeSolve":   ["虚拟求解前实时取价", "Live Price Before Solve"],
+        "param.useSquadRatingWindow":   ["虚拟求解时按阵容设置窗口", "Use Squad Rating Window for Concept Solve"],
         "param.incrementOnBidRejected": ["出价被拒时逐步加价", "Increment Price on Bid Rejected"],
         "param.apiProxy":               ["自定义 API 代理（留空使用内置随机代理）", "Custom API Proxy (leave blank for built-in)"],
         "settings.tabLeague":           ["联赛筛选", "League Filter"],
@@ -1012,6 +1013,7 @@ GM_addStyle(`
         ratingWindowExpandHigh: 3,     // 高分SBC(≥82)上限扩展：target + expand
         ratingWindowExpandLow: 4,      // 高分SBC(≥82)下限扩展：target - expand
         ratingPriceMultiplier: 1.5,    // 高分球员价格倍率指数基数
+        useSquadRatingWindow: true,    // 虚拟求解时按阵容设置窗口范围
         apiProxy: "",
         livePriceBeforeSolve: false,
         incrementOnBidRejected: true,
@@ -1088,6 +1090,7 @@ GM_addStyle(`
             ["showPrices", L("param.showPrices")],
             ["livePriceBeforeSolve", L("param.livePriceBeforeSolve")],
             ["incrementOnBidRejected", L("param.incrementOnBidRejected")],
+            ["useSquadRatingWindow", L("param.useSquadRatingWindow")],
         ];
         const UI_NUMBERS = [
             ["priceExpiry", L("param.priceExpiry"), 1, 1440],
@@ -2246,44 +2249,65 @@ GM_addStyle(`
                 windowFloor = 0;
             }
 
+            // 检测当前阵容中的虚拟球员 / Detect concept players in current squad
+            const conceptsInSquad = _challenge.squad._players.slice(0, 11)
+                .map(m => m._item)
+                .filter(item => item?.concept);
+            const hasConceptPlayers = conceptsInSquad.length > 0;
+
             // 无条件注入当前阵容中的虚拟球员到可用库（价格 × conceptPremium%），使求解器能用真实球员替换
             // Unconditionally inject concept players from current squad into pool (price × conceptPremium%) so solver can replace them with real players
-            {
-                const conceptsInSquad = _challenge.squad._players.slice(0, 11)
-                    .map(m => m._item)
-                    .filter(item => item?.concept);
-                if (conceptsInSquad.length > 0) {
-                    const existingDefIds = new Set(players.map(p => p.definitionId));
-                    conceptsInSquad.forEach(item => {
-                        if (existingDefIds.has(item.definitionId)) return;
-                        item.profile = chemUtil.getChemProfileForPlayer(item);
-                        item.normalizeClubId = chemUtil.normalizeClubId(item.teamId);
-                        const rawPrice = cachedPriceItems[item.definitionId]?.price || 0;
-                        const cbrPrice = cachedPriceItems[item.rating + "_CBR"]?.price || 100;
-                        let price = Math.max(rawPrice, cbrPrice, 100);
-                        price = Math.max(Math.round(price * conceptPremium / 100), 100);
-                        players.push({
-                            id: item.id,
-                            definitionId: item.definitionId,
-                            databaseId: item.databaseId || item.definitionId,
-                            name: item._staticData?.name || String(item.definitionId),
-                            rating: item.rating,
-                            teamId: item.teamId,
-                            leagueId: item.leagueId,
-                            nationId: item.nationId,
-                            rarityId: item.rareflag,
-                            ratingTier: item.getTier ? item.getTier() : 0,
-                            possiblePositions: item.possiblePositions || [],
-                            groups: item.groups || [],
-                            isFixed: false,
-                            isStorage: false,
-                            concept: true,
-                            price,
-                            maxChem: item.profile?.maxChem || 0,
-                            normalizeClubId: item.normalizeClubId,
-                        });
-                        existingDefIds.add(item.definitionId);
+            if (hasConceptPlayers) {
+                const existingDefIds = new Set(players.map(p => p.definitionId));
+                conceptsInSquad.forEach(item => {
+                    if (existingDefIds.has(item.definitionId)) return;
+                    item.profile = chemUtil.getChemProfileForPlayer(item);
+                    item.normalizeClubId = chemUtil.normalizeClubId(item.teamId);
+                    const rawPrice = cachedPriceItems[item.definitionId]?.price || 0;
+                    const cbrPrice = cachedPriceItems[item.rating + "_CBR"]?.price || 100;
+                    let price = Math.max(rawPrice, cbrPrice, 100);
+                    price = Math.max(Math.round(price * conceptPremium / 100), 100);
+                    players.push({
+                        id: item.id,
+                        definitionId: item.definitionId,
+                        databaseId: item.databaseId || item.definitionId,
+                        name: item._staticData?.name || String(item.definitionId),
+                        rating: item.rating,
+                        teamId: item.teamId,
+                        leagueId: item.leagueId,
+                        nationId: item.nationId,
+                        rarityId: item.rareflag,
+                        ratingTier: item.getTier ? item.getTier() : 0,
+                        possiblePositions: item.possiblePositions || [],
+                        groups: item.groups || [],
+                        isFixed: false,
+                        isStorage: false,
+                        concept: true,
+                        price,
+                        maxChem: item.profile?.maxChem || 0,
+                        normalizeClubId: item.normalizeClubId,
                     });
+                    existingDefIds.add(item.definitionId);
+                });
+            }
+
+            // 虚拟求解时按阵容设置窗口范围 / Use squad rating window for concept solve
+            // 当阵容中有虚拟球员且当前阵容可行时，按阵容的实际评分范围放宽窗口
+            // This allows club players with ratings matching concept players to enter the candidate pool
+            const useSquadRatingWindow = getOwnSettings().useSquadRatingWindow ?? SETTINGS_DEFAULTS.useSquadRatingWindow;
+            if (hasConceptPlayers && useSquadRatingWindow) {
+                // 获取当前阵容所有球员的评分 / Get ratings of all players in current squad
+                const squadRatings = _challenge.squad._players.slice(0, 11)
+                    .map(m => m._item?.rating)
+                    .filter(r => r != null);
+                if (squadRatings.length > 0) {
+                    const squadMinRating = Math.min(...squadRatings);
+                    const squadMaxRating = Math.max(...squadRatings);
+                    // 按阵容实际评分范围设置窗口，上下限各扩展1，允许同评分俱乐部球员进入候选池
+                    // Set window based on squad rating range, expand by 1 on both ends
+                    windowFloor = Math.min(windowFloor, squadMinRating - 1);
+                    windowCap = Math.max(windowCap, squadMaxRating + 1);
+                    console.log(`[NoBrain SBC] 按阵容调整窗口: 阵容评分 ${squadMinRating}-${squadMaxRating}, 窗口调整为 ${windowFloor}-${windowCap}`);
                 }
             }
 
