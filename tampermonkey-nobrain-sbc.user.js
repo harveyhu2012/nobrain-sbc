@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.48
+// @version      0.49
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       harveyhu2012
 // @homepage     https://github.com/harveyhu2012/nobrain-sbc
@@ -2379,10 +2379,19 @@ GM_addStyle(`
                 if (squadRatings.length > 0) {
                     const squadMinRating = Math.min(...squadRatings);
                     const squadMaxRating = Math.max(...squadRatings);
-                    // 按阵容实际评分范围设置窗口，上下限各扩展1，允许同评分俱乐部球员进入候选池
-                    // Set window based on squad rating range, expand by 1 on both ends
-                    windowFloor = Math.min(windowFloor, squadMinRating - 1);
-                    windowCap = Math.max(windowCap, squadMaxRating + 1);
+                    // 低分SBC（≤81）：如果阵容最高分达到或超过窗口上限，则只扩展到该分值，不再+1
+                    // Low-rating SBC (≤81): if squad max rating reaches or exceeds window cap, only extend to that value without +1
+                    if (isLowRating && squadMaxRating >= windowCap) {
+                        windowCap = squadMaxRating;
+                    } else {
+                        windowCap = Math.max(windowCap, squadMaxRating + 1);
+                    }
+                    // 下限同样处理 / Same for floor
+                    if (isLowRating && squadMinRating <= windowFloor) {
+                        windowFloor = squadMinRating;
+                    } else {
+                        windowFloor = Math.min(windowFloor, squadMinRating - 1);
+                    }
                     console.log(`[NoBrain SBC] 按阵容调整窗口: 阵容评分 ${squadMinRating}-${squadMaxRating}, 窗口调整为 ${windowFloor}-${windowCap}`);
                 }
             }
