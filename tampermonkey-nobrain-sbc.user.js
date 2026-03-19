@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.46
+// @version      0.47
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       harveyhu2012
 // @homepage     https://github.com/harveyhu2012/nobrain-sbc
@@ -371,6 +371,10 @@ GM_addStyle(`
         "param.priceExpiry":            ["价格缓存时间（分钟）", "Price Cache Duration (min)"],
         "param.livePriceBeforeSolve":   ["虚拟求解前实时取价", "Live Price Before Solve"],
         "param.useSquadRatingWindow":   ["虚拟求解时按阵容设置窗口", "Use Squad Rating Window for Concept Solve"],
+        "param.useSimulatedAnnealing":  ["使用模拟退火算法", "Use Simulated Annealing"],
+        "param.saInitialTemp":          ["SA初始温度", "SA Initial Temperature"],
+        "param.saCoolingRate":          ["SA冷却率", "SA Cooling Rate"],
+        "param.saMinTemp":              ["SA最低温度", "SA Min Temperature"],
         "param.incrementOnBidRejected": ["出价被拒时逐步加价", "Increment Price on Bid Rejected"],
         "param.apiProxy":               ["自定义 API 代理（留空使用内置随机代理）", "Custom API Proxy (leave blank for built-in)"],
         "settings.tabLeague":           ["联赛筛选", "League Filter"],
@@ -1014,6 +1018,10 @@ GM_addStyle(`
         ratingWindowExpandLow: 4,      // 高分SBC(≥82)下限扩展：target - expand
         ratingPriceMultiplier: 1.5,    // 高分球员价格倍率指数基数
         useSquadRatingWindow: true,    // 虚拟求解时按阵容设置窗口范围
+        useSimulatedAnnealing: true,   // 使用模拟退火算法
+        saInitialTemp: 1000,           // 模拟退火初始温度（降低，避免接受过多较差解）
+        saCoolingRate: 0.999,          // 模拟退火冷却率（提高，减慢冷却速度）
+        saMinTemp: 0.1,                // 模拟退火最低温度
         apiProxy: "",
         livePriceBeforeSolve: false,
         incrementOnBidRejected: true,
@@ -1091,9 +1099,13 @@ GM_addStyle(`
             ["livePriceBeforeSolve", L("param.livePriceBeforeSolve")],
             ["incrementOnBidRejected", L("param.incrementOnBidRejected")],
             ["useSquadRatingWindow", L("param.useSquadRatingWindow")],
+            ["useSimulatedAnnealing", L("param.useSimulatedAnnealing")],
         ];
         const UI_NUMBERS = [
             ["priceExpiry", L("param.priceExpiry"), 1, 1440],
+            ["saInitialTemp", L("param.saInitialTemp"), 100, 100000],
+            ["saCoolingRate", L("param.saCoolingRate"), 0.9, 0.999],
+            ["saMinTemp", L("param.saMinTemp"), 0.1, 100],
         ];
         const TEXTS = [
             ["apiProxy", L("param.apiProxy")],
@@ -1735,6 +1747,12 @@ GM_addStyle(`
             .filter(p => !isItemLocked(p))
             .sort((a, b) => (a.price || 15000000) - (b.price || 15000000));
 
+        // 模拟退火设置 / Simulated Annealing settings
+        const useSA = getOwnSettings().useSimulatedAnnealing ?? SETTINGS_DEFAULTS.useSimulatedAnnealing;
+        const saInitialTemp = Number(getOwnSettings().saInitialTemp ?? SETTINGS_DEFAULTS.saInitialTemp);
+        const saCoolingRate = Number(getOwnSettings().saCoolingRate ?? SETTINGS_DEFAULTS.saCoolingRate);
+        const saMinTemp = Number(getOwnSettings().saMinTemp ?? SETTINGS_DEFAULTS.saMinTemp);
+
         // 阶段1：多次内部重启，每次从initialSquad重新开始。
         // 每次ILS扰动带来真正不同的探索，
         // 为阶段2提供不同起点以跳出局部最优。
@@ -1769,6 +1787,10 @@ GM_addStyle(`
                 }
             }
             let localScore = feasibilityScore(localSquad, formation, constraints);
+            let localCost = checkConstraints(localSquad, formation, constraints) ? squadCost(localSquad) : Infinity;
+
+            // 模拟退火温度初始化 / Initialize SA temperature
+            let temperature = useSA ? saInitialTemp : 0;
 
             for (let iter = 0; iter < itersPerRestart; iter++) {
                 if (freeSlots1.length === 0) break;
@@ -1797,11 +1819,50 @@ GM_addStyle(`
                         bestSquad = [...newSquad];
                     }
                     if (strictPosition && meetsChemTarget(newSquad)) strictPosition = false;
-                    localSquad = [...newSquad];
-                    localScore = Infinity;
+
+                    // 模拟退火：决定是否接受新解 / SA: decide whether to accept new solution
+                    // 注意：bestSquad始终保持全局最优，localSquad用于探索
+                    // Note: bestSquad always keeps global best, localSquad is for exploration
+                    if (useSA && temperature > saMinTemp) {
+                        const deltaCost = newCost - localCost;
+                        // 更好的解总是接受，较差的解以一定概率接受
+                        // Always accept better solution, accept worse with probability
+                        if (deltaCost <= 0) {
+                            localSquad = [...newSquad];
+                            localCost = newCost;
+                            localScore = Infinity;
+                        } else if (Math.random() < Math.exp(-deltaCost / temperature)) {
+                            localSquad = [...newSquad];
+                            localCost = newCost;
+                            localScore = Infinity;
+                        }
+                        // 冷却 / Cool down
+                        temperature *= saCoolingRate;
+                    } else {
+                        // 不使用SA或温度过低时，使用原始爬山逻辑
+                        // Without SA or temperature too low, use original hill climbing
+                        localSquad = [...newSquad];
+                        localCost = newCost;
+                        localScore = Infinity;
+                    }
                 } else {
                     const newScore = feasibilityScore(newSquad, formation, constraints);
-                    const accepted = newScore > localScore || emptySlots.length > 0;
+                    // 不可行解的处理：使用feasibilityScore或SA
+                    // Handle infeasible solution: use feasibilityScore or SA
+                    let accepted = false;
+                    if (useSA && temperature > saMinTemp && localScore !== -Infinity) {
+                        // 用feasibilityScore差值模拟"成本"
+                        // Use feasibilityScore difference as "cost"
+                        const deltaScore = localScore - newScore; // 注意：score越高越好，所以反过来
+                        if (deltaScore < 0) {
+                            accepted = true;
+                        } else if (Math.random() < Math.exp(-deltaScore * 100 / temperature)) {
+                            accepted = true;
+                        }
+                        temperature *= saCoolingRate;
+                    } else {
+                        accepted = newScore > localScore || emptySlots.length > 0;
+                    }
                     if (accepted) {
                         localSquad = [...newSquad];
                         localScore = newScore;
