@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.49
+// @version      0.50
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       harveyhu2012
 // @homepage     https://github.com/harveyhu2012/nobrain-sbc
@@ -1513,8 +1513,13 @@ GM_addStyle(`
                 if (scope === "LOWER" && cnt > count) return false;
             }
             else if (key === "SAME_CLUB_COUNT") {
+                // 使用 normalizeClubId 统计同一俱乐部的球员数，以支持男足/女足俱乐部归一化
+                // Use normalizeClubId to count players from same club, supporting men's/women's club normalization
                 const clubCounts = {};
-                players.forEach(p => { clubCounts[p.teamId] = (clubCounts[p.teamId] || 0) + 1; });
+                players.forEach(p => {
+                    const clubId = p.normalizeClubId || p.teamId;
+                    clubCounts[clubId] = (clubCounts[clubId] || 0) + 1;
+                });
                 const maxSame = Math.max(...Object.values(clubCounts));
                 if (!satisfies(maxSame, vals[0], scope)) return false;
             }
@@ -1531,7 +1536,9 @@ GM_addStyle(`
                 if (!satisfies(maxSame, vals[0], scope)) return false;
             }
             else if (key === "CLUB_COUNT") {
-                const uniqueClubs = new Set(players.map(p => p.teamId)).size;
+                // 使用 normalizeClubId 统计唯一俱乐部数，以支持男足/女足俱乐部归一化
+                // Use normalizeClubId to count unique clubs, supporting men's/women's club normalization
+                const uniqueClubs = new Set(players.map(p => p.normalizeClubId || p.teamId)).size;
                 if (!satisfies(uniqueClubs, vals[0], scope)) return false;
             }
             else if (key === "LEAGUE_COUNT") {
@@ -1543,7 +1550,11 @@ GM_addStyle(`
                 if (!satisfies(uniqueNations, vals[0], scope)) return false;
             }
             else if (key === "CLUB_ID") {
-                const cnt = players.filter(p => vals.includes(p.teamId)).length;
+                // 使用 normalizeClubId 而不是 teamId，以支持男足/女足俱乐部匹配
+                // 例如：女足皇马 teamId=116326 会被归一化为男足皇马 normalizeClubId=243
+                // Use normalizeClubId instead of teamId to support men's/women's club matching
+                // E.g., women's Real Madrid teamId=116326 is normalized to men's Real Madrid normalizeClubId=243
+                const cnt = players.filter(p => vals.includes(p.normalizeClubId || p.teamId)).length;
                 if (!satisfies(cnt, count, scope)) return false;
             }
             else if (key === "LEAGUE_ID") {
