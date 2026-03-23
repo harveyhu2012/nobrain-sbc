@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.50
+// @version      0.51
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       harveyhu2012
 // @homepage     https://github.com/harveyhu2012/nobrain-sbc
@@ -318,6 +318,19 @@ GM_addStyle(`
         font-weight: 500;
         margin-left: 0.3rem;
         text-align: center;
+        padding: 0 0.1rem;
+        font-size: 0.75rem;
+        min-width: 2.5rem;
+    }
+    /* Nobrain 按钮容器独立显示在左上角 / Nobrain button container displayed independently at top-left */
+    .nobrain-quick-list.other {
+        position: absolute;
+        top: 0;
+        left: 0;
+        z-index: 100;
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
     }
     .nobrain-quick-list.other .im:hover {
         background-color: #f5efe6;
@@ -422,8 +435,12 @@ GM_addStyle(`
         "misc.closePanel":              ["关闭", "Close"],
         // 按钮 / Buttons
         "btn.solve":                    ["求解SBC", "Solve SBC"],
+        "btn.solveShort":               ["求解", "Solve"],
         "btn.conceptSolve":             ["虚拟求解", "Concept Solve"],
-        "btn.livePrice":                ["实时取价", "Live Price"],
+        "btn.conceptSolveShort":        ["虚解", "Concept"],
+        "btn.clearSquad":               ["清空", "Clear"],
+        "btn.buySquadShort":            ["批购", "Buy"],
+        "btn.livePrice":                ["取价", "Live Price"],
         "btn.getMarketPrice":           ["查询市场低价", "Get Market Price"],
         "notify.livePriceComplete":     ["实时取价完成：%1 个球员", "Live price complete: %1 players"],
         "notify.livePriceError":        ["实时取价出错", "Live price error"],
@@ -2645,6 +2662,256 @@ GM_addStyle(`
         }
     };
 
+    // ─── 求解函数 / Solve Function ────────────────────────────────────────────────
+    const doSolve = async (_challenge) => {
+        if (!_challenge) {
+            showNotification(L("notify.noChallenge"), UINotificationType.NEGATIVE);
+            return;
+        }
+        await nobrainSolveSBC(_challenge);
+    };
+
+    // ─── 清空阵容函数 / Clear Squad Function ──────────────────────────────────────
+    const doClearSquad = (_challenge) => {
+        if (!_challenge) {
+            showNotification(L("notify.noChallenge"), UINotificationType.NEGATIVE);
+            return;
+        }
+        const _squad = getCurrentSquad();
+        if (!_squad) {
+            showNotification(L("notify.noSquad"), UINotificationType.NEGATIVE);
+            return;
+        }
+        _squad.removeAllItems();
+        _squad.setPlayers([], true);
+        showNotification("阵容已清空", UINotificationType.POSITIVE);
+    };
+
+    // ─── 批量购买函数 / Batch Buy Function ────────────────────────────────────────
+    const doBuySquad = async (triggerBtn) => {
+        if (!triggerBtn) {
+            showNotification(L("notify.noConcepts"), UINotificationType.NEGATIVE);
+            return;
+        }
+        if (triggerBtn.dataset.running === "true") return;
+        triggerBtn.dataset.running = "true";
+        triggerBtn.setAttribute("disabled", "disabled");
+        triggerBtn.classList.add("disabled");
+
+        const { container: statusContainer, content: statusContent, footer: statusFooter } = getOrCreateBuyStatusPanel();
+        statusContainer.style.display = "flex";
+        statusContent.innerHTML = "";
+        statusFooter.textContent = "";
+
+        const titleBlock = document.createElement("div");
+        titleBlock.textContent = L("buy.title");
+        titleBlock.className = "nobrain-buy-title";
+        statusContent.appendChild(titleBlock);
+        const hintBlock = document.createElement("div");
+        hintBlock.textContent = L("buy.closeToStop");
+        hintBlock.style.cssText = "font-size:0.75rem;opacity:0.6;margin-bottom:0.35rem;text-align:center;";
+        statusContent.appendChild(hintBlock);
+
+        const conceptItems = getConceptsInSquad();
+        if (!conceptItems.length) {
+            showNotification(L("notify.noConcepts"), UINotificationType.NEGATIVE);
+            delete triggerBtn.dataset.running;
+            triggerBtn.removeAttribute("disabled");
+            triggerBtn.classList.remove("disabled");
+            return;
+        }
+
+        _buyAborted = false;
+        let successCount = 0;
+        try {
+            const headerRow = document.createElement("div");
+            headerRow.className = "nobrain-buy-header-row";
+            [L("buy.colPlayer"), L("buy.colExpected"), L("buy.colStatus")].forEach((lbl) => {
+                const span = document.createElement("span");
+                span.textContent = lbl;
+                headerRow.appendChild(span);
+            });
+            statusContent.appendChild(headerRow);
+
+            const rowData = conceptItems.map((conceptItem) => {
+                const name = (conceptItem?._staticData?.firstName + " " + conceptItem?._staticData?.lastName).trim() || conceptItem?._staticData?.lastName || String(conceptItem?.definitionId || "");
+                const rawExpectedPrice = getPrice(conceptItem);
+                const expectedPrice = typeof rawExpectedPrice === "number" && Number.isFinite(rawExpectedPrice) && rawExpectedPrice > 0 ? rawExpectedPrice : NaN;
+                const expectedLabel = Number.isFinite(expectedPrice) ? expectedPrice.toLocaleString() : L("misc.na");
+                const row = document.createElement("div");
+                row.className = "nobrain-buy-row";
+                const nameSpan = document.createElement("span"); nameSpan.textContent = name;
+                const priceSpan = document.createElement("span"); priceSpan.textContent = expectedLabel;
+                const statusSpan = document.createElement("span"); statusSpan.textContent = L("buy.queued");
+                row.append(nameSpan, priceSpan, statusSpan);
+                statusContent.appendChild(row);
+                return { conceptItem, expectedLabel, statusSpan };
+            });
+
+            statusContent.scrollTop = statusContent.scrollHeight;
+
+            for (let i = 0; i < rowData.length; i++) {
+                if (_buyAborted) break;
+                const { conceptItem, expectedLabel, statusSpan } = rowData[i];
+                statusSpan.textContent = L("buy.buying");
+                statusSpan.style.color = "";
+
+                const result = await buyConceptPlayer(conceptItem, { suppressNotifications: true });
+
+                if (result?.success) {
+                    successCount += 1;
+                    const label = result?.priceLabel || expectedLabel;
+                    statusSpan.textContent = label ? L("buy.successAt", label) : L("buy.success");
+                    statusSpan.style.color = "#07f468";
+                } else {
+                    let reasonLabel = L("buy.failed");
+                    if (result?.reason === "alreadyOwned") {
+                        reasonLabel = L("buy.alreadyOwned");
+                        statusSpan.style.color = "#aaa";
+                    } else if (result?.reason === "noCachedPrice") {
+                        reasonLabel = L("buy.missingPrice");
+                    } else if (result?.reason === "noListing") {
+                        reasonLabel = L("buy.noListing");
+                    } else if (result?.reason === "priceAboveBaseline") {
+                        const baselineLabel = result?.baselineLabel || (Number.isFinite(result?.baseline) ? result.baseline.toLocaleString() : "unknown");
+                        const priceLabel = result?.priceLabel || expectedLabel;
+                        reasonLabel = priceLabel && baselineLabel ? L("buy.skipped", priceLabel, baselineLabel) : L("buy.priceTooHigh");
+                    } else if (result?.reason === "bidFailed") {
+                        reasonLabel = L("buy.bidRejected");
+                    } else if (result?.reason === "error") {
+                        reasonLabel = L("buy.error");
+                    }
+                    if (result?.reason !== "alreadyOwned") statusSpan.style.color = "#f40727";
+                    statusSpan.textContent = reasonLabel;
+                }
+
+                if (i < rowData.length - 1 && !_buyAborted) {
+                    const delay = 2000 + Math.floor(Math.random() * 3000);
+                    const end = Date.now() + delay;
+                    while (Date.now() < end && !_buyAborted) {
+                        statusFooter.textContent = `${L("buy.nextIn")} ${((end - Date.now()) / 1000).toFixed(1)}s`;
+                        await new Promise((r) => setTimeout(r, Math.min(200, end - Date.now())));
+                    }
+                    statusFooter.textContent = "";
+                } else {
+                    statusFooter.textContent = "";
+                }
+            }
+
+            showNotification(
+                L("notify.buyComplete", successCount, conceptItems.length),
+                successCount === conceptItems.length ? UINotificationType.POSITIVE : UINotificationType.NEGATIVE
+            );
+        } catch (err) {
+            console.error("[NoBrainSBC] Buy squad error", err);
+            showNotification(L("notify.buyEncounterError"), UINotificationType.NEGATIVE);
+        } finally {
+            if (!_buyAborted) {
+                statusFooter.textContent = L("buy.closingIn");
+                await new Promise((r) => setTimeout(r, 5000));
+            }
+            _buyAborted = false;
+            statusContainer.style.display = "none";
+            statusContent.innerHTML = "";
+            statusFooter.textContent = "";
+            delete triggerBtn.dataset.running;
+            triggerBtn.removeAttribute("disabled");
+            triggerBtn.classList.remove("disabled");
+
+            // 手机端返回阵容界面 / Return to squad view on mobile
+            if (successCount > 0 && isPhone() && cntlr.current()?.className === "UTSBCSquadDetailPanelViewController") {
+                setTimeout(() => {
+                    cntlr.current().parentViewController._eBackButtonTapped();
+                }, 500);
+            }
+        }
+    };
+
+    // ─── 虚拟求解函数 / Concept Solve Function ────────────────────────────────────
+    const doConceptSolve = async (_challenge) => {
+        const fillBtn = getFsuFillBtn();
+        if (!fillBtn) {
+            showNotification(L("notify.fsuNotFound"), UINotificationType.NEGATIVE);
+            return;
+        }
+        // 每次登录首次调用时显示致谢提示 / Show credit notice once per session
+        if (!sessionStorage.getItem("nobrainFsuCreditShown")) {
+            sessionStorage.setItem("nobrainFsuCreditShown", "1");
+            showNotification(L("notify.fsuCredit"), UINotificationType.POSITIVE);
+            await new Promise(r => setTimeout(r, 2500));
+        }
+        // Hook events.saveSquad 拦截 FSU 填充完成，阻止其保存
+        let filled = false;
+        const origSaveSquad = unsafeWindow.events.saveSquad;
+        const nav = cntlr.current()?.getNavigationController?.();
+        const origBack = nav?._eBackButtonTapped?.bind(nav);
+        const restoreBack = () => { if (nav && origBack) nav._eBackButtonTapped = origBack; };
+        try {
+            if (nav) nav._eBackButtonTapped = () => {};
+            await new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => reject(new Error("timeout")), 30000);
+                let pollStarted = false;
+                const cancelPoll = setInterval(() => {
+                    if (!pollStarted) { pollStarted = true; return; }
+                    if (!unsafeWindow.info?.run?.template) {
+                        clearInterval(cancelPoll);
+                        clearTimeout(timeout);
+                        reject(new Error("cancelled"));
+                    }
+                }, 500);
+                unsafeWindow.events.saveSquad = async (c, s, l, a) => {
+                    clearInterval(cancelPoll);
+                    clearTimeout(timeout);
+                    s.removeAllItems();
+                    s.setPlayers(l, true);
+                    filled = true;
+                    resolve();
+                };
+                unsafeWindow.events.getTemplate(fillBtn, 1);
+            });
+        } catch (e) {
+            if (e.message === "timeout") showNotification(L("notify.fsuFillTimeout"), UINotificationType.NEGATIVE);
+        } finally {
+            unsafeWindow.events.saveSquad = origSaveSquad;
+        }
+        if (filled) {
+            try {
+                await new Promise(r => setTimeout(r, 100));
+                const squad = _challenge.squad;
+                if (squad) {
+                    const conceptPlayers = squad._players.slice(0, 11)
+                        .map(m => m._item)
+                        .filter(item => item?.concept && item.definitionId);
+                    if (conceptPlayers.length > 0) {
+                        const livePriceEnabled = getOwnSettings().livePriceBeforeSolve ?? SETTINGS_DEFAULTS.livePriceBeforeSolve;
+                        if (livePriceEnabled) {
+                            try {
+                                await fetchLivePricesForSquad(squad, { refreshLabels: false });
+                            } catch (e) {
+                                console.warn("[虚拟求解] 实时取价失败:", e);
+                            }
+                        } else {
+                            await loadPriceItems();
+                            const needsPrice = conceptPlayers.filter(item => !cachedPriceItems[item.definitionId]?.price);
+                            if (needsPrice.length > 0) {
+                                try {
+                                    await fetchAndCachePrices(needsPrice, null, false);
+                                } catch (e) {
+                                    console.warn("[虚拟求解] 虚拟球员取价失败:", e);
+                                }
+                            }
+                        }
+                    }
+                }
+                await nobrainSolveSBC(_challenge);
+            } finally {
+                restoreBack();
+            }
+        } else {
+            restoreBack();
+        }
+    };
+
     // ─── 按钮注入 / Button Injection ─────────────────────────────────────────────
     const squadDetailPanelViewInit = UTSBCSquadDetailPanelView.prototype.init;
     UTSBCSquadDetailPanelView.prototype.init = function (...args) {
@@ -2652,11 +2919,7 @@ GM_addStyle(`
 
         const offlineBtn = createButton("idOfflineSolveSbc", L("btn.solve"), async () => {
             const _challenge = getCurrentChallenge();
-            if (!_challenge) {
-                showNotification(L("notify.noChallenge"), UINotificationType.NEGATIVE);
-                return;
-            }
-            await nobrainSolveSBC(_challenge);
+            await doSolve(_challenge);
         });
 
         offlineBtn.style.flex = "1";
@@ -2671,102 +2934,7 @@ GM_addStyle(`
                     showNotification(L("notify.noChallenge"), UINotificationType.NEGATIVE);
                     return;
                 }
-                const fillBtn = getFsuFillBtn();
-                if (!fillBtn) {
-                    showNotification(L("notify.fsuNotFound"), UINotificationType.NEGATIVE);
-                    return;
-                }
-                // 每次登录首次调用时显示致谢提示 / Show credit notice once per session
-                if (!sessionStorage.getItem("nobrainFsuCreditShown")) {
-                    sessionStorage.setItem("nobrainFsuCreditShown", "1");
-                    showNotification(L("notify.fsuCredit"), UINotificationType.POSITIVE);
-                    await new Promise(r => setTimeout(r, 2500));
-                }
-                // Hook events.saveSquad 拦截 FSU 填充完成，阻止其保存
-                // Hook events.saveSquad to intercept FSU fill completion and suppress its save
-                let filled = false;
-                const origSaveSquad = unsafeWindow.events.saveSquad;
-                const nav = cntlr.current()?.getNavigationController?.();
-                const origBack = nav?._eBackButtonTapped?.bind(nav);
-                const restoreBack = () => { if (nav && origBack) nav._eBackButtonTapped = origBack; };
-                try {
-                    if (nav) nav._eBackButtonTapped = () => {};
-                    await new Promise((resolve, reject) => {
-                        const timeout = setTimeout(() => reject(new Error("timeout")), 30000);
-                        // 轮询 FSU 的 info.run.template，取消时提前退出（延迟500ms启动，等getTemplate设置标志）
-                        // Poll FSU's info.run.template to detect cancellation; delay start to let getTemplate set the flag
-                        let pollStarted = false;
-                        const cancelPoll = setInterval(() => {
-                            if (!pollStarted) { pollStarted = true; return; }
-                            if (!unsafeWindow.info?.run?.template) {
-                                clearInterval(cancelPoll);
-                                clearTimeout(timeout);
-                                reject(new Error("cancelled"));
-                            }
-                        }, 500);
-                        unsafeWindow.events.saveSquad = async (c, s, l, a) => {
-                            clearInterval(cancelPoll);
-                            clearTimeout(timeout);
-                            s.removeAllItems();
-                            s.setPlayers(l, true);
-                            filled = true;
-                            resolve();
-                        };
-                        unsafeWindow.events.getTemplate(fillBtn, 1);
-                    });
-                } catch (e) {
-                    if (e.message === "timeout") showNotification(L("notify.fsuFillTimeout"), UINotificationType.NEGATIVE);
-                    // cancelled: 静默退出 / cancelled: silent exit
-                } finally {
-                    unsafeWindow.events.saveSquad = origSaveSquad;
-                    // _eBackButtonTapped 在 nobrainSolveSBC 完成后恢复，不在此处恢复
-                    // _eBackButtonTapped restored after solver completes, not here
-                }
-                if (filled) {
-                    try {
-                        // 等 FSU 的 finally（hideLoader）执行完再开始求解
-                        // Wait for FSU's finally (hideLoader) to run before starting solver
-                        await new Promise(r => setTimeout(r, 100));
-
-                        // 确保虚拟球员有价格 / Ensure concept players have prices
-                        const squad = _challenge.squad;
-                        if (squad) {
-                            const conceptPlayers = squad._players.slice(0, 11)
-                                .map(m => m._item)
-                                .filter(item => item?.concept && item.definitionId);
-                            
-                            if (conceptPlayers.length > 0) {
-                                const livePriceEnabled = getOwnSettings().livePriceBeforeSolve ?? SETTINGS_DEFAULTS.livePriceBeforeSolve;
-                                
-                                if (livePriceEnabled) {
-                                    // 实时取价 / Live price fetch
-                                    try {
-                                        await fetchLivePricesForSquad(squad, { refreshLabels: false });
-                                    } catch (e) {
-                                        console.warn("[虚拟求解] 实时取价失败:", e);
-                                    }
-                                } else {
-                                    // 通过 fut.gg/futnext 取价（仅缺失或过期的）/ Fetch via fut.gg/futnext (missing or stale only)
-                                    await loadPriceItems();
-                                    const needsPrice = conceptPlayers.filter(item => !cachedPriceItems[item.definitionId]?.price);
-                                    if (needsPrice.length > 0) {
-                                        try {
-                                            await fetchAndCachePrices(needsPrice, null, false);
-                                        } catch (e) {
-                                            console.warn("[虚拟求解] 虚拟球员取价失败:", e);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        await nobrainSolveSBC(_challenge);
-                    } finally {
-                        restoreBack();
-                    }
-                } else {
-                    restoreBack();
-                }
+                await doConceptSolve(_challenge);
             });
             conceptSolveBtn.style.flex = "1";
             conceptSolveBtn.classList.add("mini");
@@ -2785,138 +2953,7 @@ GM_addStyle(`
 
         // 批量购买按钮 / Batch buy button
         const buyBtn = createButton("idNobrainBuySquad", L("btn.buySquad"), async () => {
-            if (buyBtn.dataset.running === "true") return;
-            buyBtn.dataset.running = "true";
-            buyBtn.setAttribute("disabled", "disabled");
-            buyBtn.classList.add("disabled");
-
-            const { container: statusContainer, content: statusContent, footer: statusFooter } = getOrCreateBuyStatusPanel();
-            statusContainer.style.display = "flex";
-            statusContent.innerHTML = "";
-            statusFooter.textContent = "";
-
-            const titleBlock = document.createElement("div");
-            titleBlock.textContent = L("buy.title");
-            titleBlock.className = "nobrain-buy-title";
-            statusContent.appendChild(titleBlock);
-            const hintBlock = document.createElement("div");
-            hintBlock.textContent = L("buy.closeToStop");
-            hintBlock.style.cssText = "font-size:0.75rem;opacity:0.6;margin-bottom:0.35rem;text-align:center;";
-            statusContent.appendChild(hintBlock);
-
-            const conceptItems = getConceptsInSquad();
-            if (!conceptItems.length) {
-                showNotification(L("notify.noConcepts"), UINotificationType.NEGATIVE);
-                delete buyBtn.dataset.running;
-                buyBtn.removeAttribute("disabled");
-                buyBtn.classList.remove("disabled");
-                return;
-            }
-
-            _buyAborted = false;
-            let successCount = 0;
-            try {
-                const headerRow = document.createElement("div");
-                headerRow.className = "nobrain-buy-header-row";
-                [L("buy.colPlayer"), L("buy.colExpected"), L("buy.colStatus")].forEach((lbl) => {
-                    const span = document.createElement("span");
-                    span.textContent = lbl;
-                    headerRow.appendChild(span);
-                });
-                statusContent.appendChild(headerRow);
-
-                const rowData = conceptItems.map((conceptItem) => {
-                    const name = (conceptItem?._staticData?.firstName + " " + conceptItem?._staticData?.lastName).trim() || conceptItem?._staticData?.lastName || String(conceptItem?.definitionId || "");
-                    const rawExpectedPrice = getPrice(conceptItem);
-                    const expectedPrice = typeof rawExpectedPrice === "number" && Number.isFinite(rawExpectedPrice) && rawExpectedPrice > 0 ? rawExpectedPrice : NaN;
-                    const expectedLabel = Number.isFinite(expectedPrice) ? expectedPrice.toLocaleString() : L("misc.na");
-                    const row = document.createElement("div");
-                    row.className = "nobrain-buy-row";
-                    const nameSpan = document.createElement("span"); nameSpan.textContent = name;
-                    const priceSpan = document.createElement("span"); priceSpan.textContent = expectedLabel;
-                    const statusSpan = document.createElement("span"); statusSpan.textContent = L("buy.queued");
-                    row.append(nameSpan, priceSpan, statusSpan);
-                    statusContent.appendChild(row);
-                    return { conceptItem, expectedLabel, statusSpan };
-                });
-
-                statusContent.scrollTop = statusContent.scrollHeight;
-
-                for (let i = 0; i < rowData.length; i++) {
-                    if (_buyAborted) break;
-                    const { conceptItem, expectedLabel, statusSpan } = rowData[i];
-                    statusSpan.textContent = L("buy.buying");
-                    statusSpan.style.color = "";
-
-                    const result = await buyConceptPlayer(conceptItem, { suppressNotifications: true });
-
-                    if (result?.success) {
-                        successCount += 1;
-                        const label = result?.priceLabel || expectedLabel;
-                        statusSpan.textContent = label ? L("buy.successAt", label) : L("buy.success");
-                        statusSpan.style.color = "#07f468";
-                    } else {
-                        let reasonLabel = L("buy.failed");
-                        if (result?.reason === "alreadyOwned") {
-                            reasonLabel = L("buy.alreadyOwned");
-                            statusSpan.style.color = "#aaa";
-                        } else if (result?.reason === "noCachedPrice") {
-                            reasonLabel = L("buy.missingPrice");
-                        } else if (result?.reason === "noListing") {
-                            reasonLabel = L("buy.noListing");
-                        } else if (result?.reason === "priceAboveBaseline") {
-                            const baselineLabel = result?.baselineLabel || (Number.isFinite(result?.baseline) ? result.baseline.toLocaleString() : "unknown");
-                            const priceLabel = result?.priceLabel || expectedLabel;
-                            reasonLabel = priceLabel && baselineLabel ? L("buy.skipped", priceLabel, baselineLabel) : L("buy.priceTooHigh");
-                        } else if (result?.reason === "bidFailed") {
-                            reasonLabel = L("buy.bidRejected");
-                        } else if (result?.reason === "error") {
-                            reasonLabel = L("buy.error");
-                        }
-                        if (result?.reason !== "alreadyOwned") statusSpan.style.color = "#f40727";
-                        statusSpan.textContent = reasonLabel;
-                    }
-
-                    if (i < rowData.length - 1 && !_buyAborted) {
-                        const delay = 2000 + Math.floor(Math.random() * 3000);
-                        const end = Date.now() + delay;
-                        while (Date.now() < end && !_buyAborted) {
-                            statusFooter.textContent = `${L("buy.nextIn")} ${((end - Date.now()) / 1000).toFixed(1)}s`;
-                            await new Promise((r) => setTimeout(r, Math.min(200, end - Date.now())));
-                        }
-                        statusFooter.textContent = "";
-                    } else {
-                        statusFooter.textContent = "";
-                    }
-                }
-
-                showNotification(
-                    L("notify.buyComplete", successCount, conceptItems.length),
-                    successCount === conceptItems.length ? UINotificationType.POSITIVE : UINotificationType.NEGATIVE
-                );
-            } catch (err) {
-                console.error("[NoBrainSBC] Buy squad error", err);
-                showNotification(L("notify.buyEncounterError"), UINotificationType.NEGATIVE);
-            } finally {
-                if (!_buyAborted) {
-                    statusFooter.textContent = L("buy.closingIn");
-                    await new Promise((r) => setTimeout(r, 5000));
-                }
-                _buyAborted = false;
-                statusContainer.style.display = "none";
-                statusContent.innerHTML = "";
-                statusFooter.textContent = "";
-                delete buyBtn.dataset.running;
-                buyBtn.removeAttribute("disabled");
-                buyBtn.classList.remove("disabled");
-
-                // 手机端返回阵容界面 / Return to squad view on mobile
-                if (successCount > 0 && isPhone() && cntlr.current()?.className === "UTSBCSquadDetailPanelViewController") {
-                    setTimeout(() => {
-                        cntlr.current().parentViewController._eBackButtonTapped();
-                    }, 500);
-                }
-            }
+            await doBuySquad(buyBtn);
         });
         buyBtn.style.flex = "1";
         buyBtn.classList.add("mini");
@@ -3036,6 +3073,51 @@ GM_addStyle(`
             // 保存 controller 引用 / Save controller reference
             const controllerRef = this;
 
+            // 创建"求解"按钮 / Create "Solve" button
+            const solveBtn = createButton("idSolveInSquad", L("btn.solveShort"), async () => {
+                const _challenge = getCurrentChallenge();
+                if (!_challenge) {
+                    showNotification(L("notify.noChallenge"), UINotificationType.NEGATIVE);
+                    return;
+                }
+                await doSolve(_challenge);
+                // 刷新阵容价格 / Refresh squad price
+                if (isFSURunning()) {
+                    const players = cntlr.current()._squad._players.map(p => p._item);
+                    events.loadPlayerInfo(players);
+                }
+            }, "im");
+
+            // 创建"虚解"按钮（仅当 FSU 存在时）/ Create "Concept Solve" button (only if FSU exists)
+            let conceptSolveBtn = null;
+            if (isFSURunning()) {
+                conceptSolveBtn = createButton("idConceptSolveInSquad", L("btn.conceptSolveShort"), async () => {
+                    const _challenge = getCurrentChallenge();
+                    if (!_challenge) {
+                        showNotification(L("notify.noChallenge"), UINotificationType.NEGATIVE);
+                        return;
+                    }
+                    await doConceptSolve(_challenge);
+                    const players = cntlr.current()._squad._players.map(p => p._item);
+                    events.loadPlayerInfo(players);
+                }, "im");
+            }
+
+            // 创建"清空"按钮 / Create "Clear" button
+            const clearBtn = createButton("idClearSquadInSquad", L("btn.clearSquad"), () => {
+                const _challenge = getCurrentChallenge();
+                if (!_challenge) {
+                    showNotification(L("notify.noChallenge"), UINotificationType.NEGATIVE);
+                    return;
+                }
+                doClearSquad(_challenge);
+            }, "im");
+
+            // 创建"批购"按钮 / Create "Buy" button
+            const buyBtnShort = createButton("idBuySquadInSquad", L("btn.buySquadShort"), async () => {
+                await doBuySquad(buyBtnShort);
+            }, "im");
+
             const livePriceBtn = createButton("idLivePriceInSquad", L("btn.livePrice"), async () => {
                 if (livePriceBtn.dataset.running === "true") return;
                 livePriceBtn.dataset.running = "true";
@@ -3048,6 +3130,14 @@ GM_addStyle(`
                     const currentController = typeof cntlr !== 'undefined' && cntlr.current ? cntlr.current() : controllerRef;
                     const isPhone = typeof window.isPhone === 'function' ? window.isPhone() : false;
                     const squad = isPhone ? currentController.squadContext?.squad : currentController._squad;
+
+                    // 检查是否有虚拟球员
+                    const fieldPlayers = squad.getFieldPlayers();
+                    const hasConcept = fieldPlayers.some(p => !p.isBrick() && p.item && p.item.concept);
+                    if (!hasConcept) {
+                        showNotification("阵容中无虚拟球员", UINotificationType.NEGATIVE);
+                        return;
+                    }
 
                     const success = await fetchLivePricesForSquad(squad, {
                         refreshLabels: true,
@@ -3077,13 +3167,18 @@ GM_addStyle(`
                 container.className = "nobrain-quick-list other";
                 this._nobrainQuickOther = container;
             }
+            // 按顺序添加按钮：求解、虚解、清空、取价、批购 / Add buttons in order: Solve, Concept Solve, Clear, Live Price, Buy
+            this._nobrainQuickOther.appendChild(solveBtn);
+            if (conceptSolveBtn) this._nobrainQuickOther.appendChild(conceptSolveBtn);
+            this._nobrainQuickOther.appendChild(clearBtn);
             this._nobrainQuickOther.appendChild(livePriceBtn);
+            this._nobrainQuickOther.appendChild(buyBtnShort);
 
-            // 插入到 FSU 容器旁边 / Insert next to FSU container
+            // 插入到 FSU 容器左边 / Insert to the left of FSU container
             if (this._fsu?.quickOther) {
                 const fsuParent = this._fsu.quickOther.parentNode;
                 if (fsuParent && !fsuParent.contains(this._nobrainQuickOther)) {
-                    fsuParent.appendChild(this._nobrainQuickOther);
+                    fsuParent.insertBefore(this._nobrainQuickOther, this._fsu.quickOther);
                 }
             } else {
                 // 如果 FSU 不存在，插入到阵容视图上方 / If FSU doesn't exist, insert above squad view
