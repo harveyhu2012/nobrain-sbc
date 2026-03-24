@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.51
+// @version      0.52
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       harveyhu2012
 // @homepage     https://github.com/harveyhu2012/nobrain-sbc
@@ -371,6 +371,7 @@ GM_addStyle(`
         "param.duplicateDiscount":      ["重复球员折扣 (%)", "Duplicate Discount (%)"],
         "param.untradeableDiscount":    ["不可交易折扣 (%)", "Untradeable Discount (%)"],
         "param.conceptPremium":         ["虚拟球员价格倍率 (%)", "Concept Player Price Premium (%)"],
+        "param.hillClimbMaxIterInitial":["初始解爬山迭代次数", "Initial Solution Iterations"],
         "param.hillClimbMaxIter":       ["爬山迭代次数", "Hill Climb Iterations"],
         "param.innerRestarts":          ["内部重启次数", "Inner Restarts"],
         "param.ilsNoImproveLimit":      ["ILS无改善上限", "ILS No-Improve Limit"],
@@ -1025,6 +1026,7 @@ GM_addStyle(`
         untradeableDiscount: 80,
         nobrainConceptPremium: 500,
         hillClimbMaxIter: 5000,
+        hillClimbMaxIterInitial: 50000,
         innerRestarts: 6,
         ilsNoImproveLimit: 15,
         maxPriceIncrements: 1,
@@ -1101,6 +1103,7 @@ GM_addStyle(`
             ["duplicateDiscount", L("param.duplicateDiscount"), 0, 100],
             ["untradeableDiscount", L("param.untradeableDiscount"), 0, 100],
             ["nobrainConceptPremium", L("param.conceptPremium"), 100, 1000],
+            ["hillClimbMaxIterInitial", L("param.hillClimbMaxIterInitial"), 1000, 200000],
             ["hillClimbMaxIter", L("param.hillClimbMaxIter"), 100, 50000],
             ["innerRestarts", L("param.innerRestarts"), 1, 20],
             ["ilsNoImproveLimit", L("param.ilsNoImproveLimit"), 1, 100],
@@ -2265,6 +2268,7 @@ GM_addStyle(`
             const duplicateDiscount   = getSharedSettings("duplicateDiscount")   ?? 50;
             const untradeableDiscount = getSharedSettings("untradeableDiscount") ?? 80;
             const conceptPremium      = getSharedSettings("nobrainConceptPremium") ?? 500;
+            const hillClimbMaxIterInitial = getSharedSettings("hillClimbMaxIterInitial") ?? 50000;
             const hillClimbMaxIter    = getSharedSettings("hillClimbMaxIter")    ?? 5000;
             const innerRestarts       = getSharedSettings("innerRestarts")       ?? 6;
             const ilsNoImproveLimitBase = getSharedSettings("ilsNoImproveLimit") ?? 15;
@@ -2488,7 +2492,7 @@ GM_addStyle(`
                         const cappedPlayers = players.filter(p => p.rating <= cap && p.rating >= floor);
                         if (cappedPlayers.length < 11) continue;
                         const squad = greedySolve(cappedPlayers, sbcData);
-                        const result = await localSearch(squad, cappedPlayers, sbcData, hillClimbMaxIter, lsProgressCb, innerRestarts);
+                        const result = await localSearch(squad, cappedPlayers, sbcData, hillClimbMaxIterInitial, lsProgressCb, innerRestarts);
                         if (result.feasible) {
                             bestCappedPlayers = cappedPlayers;
                             bestResult = result;
@@ -2508,7 +2512,7 @@ GM_addStyle(`
                         const cappedPlayers = players.filter(p => p.rating <= actualCap && p.rating >= actualFloor);
                         if (cappedPlayers.length < 11) continue;
                         const squad = greedySolve(cappedPlayers, sbcData);
-                        const result = await localSearch(squad, cappedPlayers, sbcData, hillClimbMaxIter, lsProgressCb, innerRestarts);
+                        const result = await localSearch(squad, cappedPlayers, sbcData, hillClimbMaxIterInitial, lsProgressCb, innerRestarts);
                         if (result.feasible) {
                             bestCappedPlayers = cappedPlayers;
                             bestResult = result;
@@ -2518,7 +2522,7 @@ GM_addStyle(`
                 } else {
                     // 无评分要求：使用所有球员 / No rating requirement: use all players
                     const squad = greedySolve(players, sbcData);
-                    const result = await localSearch(squad, players, sbcData, hillClimbMaxIter, lsProgressCb, innerRestarts);
+                    const result = await localSearch(squad, players, sbcData, hillClimbMaxIterInitial, lsProgressCb, innerRestarts);
                     if (result.feasible) {
                         bestCappedPlayers = players;  // 无评分要求时确实使用全部球员
                         bestResult = result;
@@ -2569,6 +2573,7 @@ GM_addStyle(`
 
             // 评分降级：用最低评分的有效替补替换最高评分球员 / Rating downgrade pass: replace highest-rated player with lowest-rated valid substitute
             if (ratingTarget > 0) {
+                updateProgress("评分降级优化中...");
                 const { formation, brickIndices, constraints } = sbcData;
                 const downgradPool = bestCappedPlayers
                     .filter(p => !isItemLocked(p))
@@ -2576,8 +2581,10 @@ GM_addStyle(`
                 let current = [...bestResult.squad];
                 let improved = true;
                 const skippedSlots = new Set();
+                let downgradRound = 0;
                 while (improved) {
                     improved = false;
+                    downgradRound++;
                     let worstSlot = -1, worstRating = -1;
                     for (let i = 0; i < 11; i++) {
                         if (brickIndices.includes(i) || formation[i] === -1) continue;
@@ -2610,18 +2617,25 @@ GM_addStyle(`
                         skippedSlots.add(worstSlot);
                         improved = true;
                     }
+                    // 每轮更新进度并让浏览器有机会响应 / Update progress each round and let browser respond
+                    if (downgradRound % 3 === 0) {
+                        updateProgress(`评分降级优化中... (第${downgradRound}轮)`);
+                        await new Promise(r => setTimeout(r, 0));
+                    }
                 }
                 bestResult = { ...bestResult, squad: current };
             }
 
             // ILS结束后执行位置优化，确保真实球员在正确位置
             // Run position optimization after ILS to ensure real players are in correct positions
+            updateProgress("位置优化中...");
             const chemReqFinal = sbcData.constraints.find(r => r.requirementKey === "CHEMISTRY_POINTS");
             const chemTargetFinal = chemReqFinal ? chemReqFinal.eligibilityValues[0] : 0;
             const strictPositionFinal = chemTargetFinal > 0;
             optimizePositions(bestResult.squad, sbcData.formation, sbcData.brickIndices, sbcData.constraints, chemTargetFinal, strictPositionFinal);
 
             // 构建saveSquad所需的球员列表 / Build solution player list for saveSquad
+            updateProgress("构建解决方案...");
             const _squad = getCurrentSquad();
             if (!_squad) {
                 hideLoader();
@@ -2654,6 +2668,7 @@ GM_addStyle(`
                 }
             });
 
+            updateProgress("保存阵容中...");
             await saveSquad(_challenge, _squad, solutionPlayers);
 
         } catch (e) {
