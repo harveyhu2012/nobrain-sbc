@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.52
+// @version      0.53
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       harveyhu2012
 // @homepage     https://github.com/harveyhu2012/nobrain-sbc
@@ -2157,13 +2157,14 @@ GM_addStyle(`
     const saveSquad = async (_challenge, _squad, solutionPlayers) => {
         _squad.removeAllItems();
         _squad.setPlayers(solutionPlayers, true);
-        await services.SBC.saveChallenge(_challenge).observe(this, async (z, d) => {
+        // 使用null作为observer上下文，避免依赖this / Use null as observer context to avoid dependency on this
+        await services.SBC.saveChallenge(_challenge).observe(null, async (z, d) => {
             if (!d.success) {
                 hideLoader();
                 showNotification(L("notify.saveFailed"), UINotificationType.NEGATIVE);
                 return;
             }
-            services.SBC.loadChallengeData(_challenge).observe(this, async (z2, data) => {
+            services.SBC.loadChallengeData(_challenge).observe(null, async (z2, data) => {
                 try {
                     const squad = data.response.squad;
                     hideLoader();
@@ -2636,7 +2637,8 @@ GM_addStyle(`
 
             // 构建saveSquad所需的球员列表 / Build solution player list for saveSquad
             updateProgress("构建解决方案...");
-            const _squad = getCurrentSquad();
+            // 优先使用传入challenge的squad，否则从控制器获取 / Prefer challenge.squad, fallback to controller
+            const _squad = _challenge.squad || getCurrentSquad();
             if (!_squad) {
                 hideLoader();
                 showNotification(L("notify.noSquad"), UINotificationType.NEGATIVE);
@@ -4040,6 +4042,26 @@ GM_addStyle(`
         const _squad = getCurrentSquad();
         const squadPlayers = Array.isArray(_squad?._players) ? _squad._players : [];
         return squadPlayers.slice(0, 11).map((slot) => slot?._item).filter((item) => item && item.concept);
+    };
+
+    // ─── 暴露API供Helper插件调用 / Expose API for Helper plugin ────────────────────
+    unsafeWindow._nobrainAPI = {
+        // 核心求解函数
+        solveSBC: nobrainSolveSBC,
+        doSolve: doSolve,
+        doConceptSolve: doConceptSolve,
+        doClearSquad: doClearSquad,
+        doBuySquad: doBuySquad,
+        // 工具函数
+        getCurrentChallenge: getCurrentChallenge,
+        getCurrentSquad: getCurrentSquad,
+        showLoader: showLoader,
+        hideLoader: hideLoader,
+        showNotification: showNotification,
+        // 常量
+        services: services,
+        repositories: repositories,
+        cntlr: cntlr
     };
 
 })();
