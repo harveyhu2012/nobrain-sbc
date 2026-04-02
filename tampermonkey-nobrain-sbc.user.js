@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.54
+// @version      0.55
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       harveyhu2012
 // @homepage     https://github.com/harveyhu2012/nobrain-sbc
@@ -1470,15 +1470,22 @@ GM_addStyle(`
     };
 
     // ─── 约束检查 / Constraint Checking ──────────────────────────────────────────
-    const checkConstraints = (squad, formation, constraints) => {
+    const checkConstraints = (squad, formation, constraints, debug = false) => {
         const players = squad.filter(Boolean);
         // 所有非brick位置必须填满（formation[i] !== -1 表示真实位置）/ Must have all non-brick slots filled (formation[i] !== -1 means it's a real slot)
         const requiredSlots = formation.filter(f => f !== -1).length;
-        if (players.length < requiredSlots) return false;
+        if (players.length < requiredSlots) {
+            if (debug) console.log(`[checkConstraints] FAIL: 球员数不足 players=${players.length}, required=${requiredSlots}`);
+            return false;
+        }
 
         const ratings = players.map(p => p.rating);
         const squadRating = calcSquadRating(ratings);
         const { totalChem, playerChems } = calcChemistry(squad, formation);
+
+        if (debug) {
+            console.log(`[checkConstraints] 阵容评分=${squadRating}, 化学值=${totalChem}, 球员数=${players.length}`);
+        }
 
         for (const req of constraints) {
             const key = req.requirementKey;
@@ -1493,44 +1500,84 @@ GM_addStyle(`
                 return true;
             };
 
+            const failLog = (msg) => {
+                if (debug) console.log(`[checkConstraints] FAIL: ${msg} | key=${key}, scope=${scope}, count=${count}, vals=${JSON.stringify(vals)}`);
+            };
+
             if (key === "TEAM_RATING") {
-                if (!satisfies(squadRating, vals[0], scope)) return false;
+                if (!satisfies(squadRating, vals[0], scope)) {
+                    failLog(`阵容评分 ${squadRating} 不满足 ${scope} ${vals[0]}`);
+                    return false;
+                }
             }
             else if (key === "CHEMISTRY_POINTS") {
-                if (!satisfies(totalChem, vals[0], scope)) return false;
+                if (!satisfies(totalChem, vals[0], scope)) {
+                    failLog(`化学值 ${totalChem} 不满足 ${scope} ${vals[0]}`);
+                    return false;
+                }
             }
             else if (key === "ALL_PLAYERS_CHEMISTRY_POINTS") {
-                if (playerChems.some(c => !satisfies(c, vals[0], scope))) return false;
+                if (playerChems.some(c => !satisfies(c, vals[0], scope))) {
+                    failLog(`球员化学值 [${playerChems.join(',')}] 不满足 ${scope} ${vals[0]}`);
+                    return false;
+                }
             }
             else if (key === "PLAYER_MIN_OVR") {
                 const cnt = players.filter(p => p.rating >= vals[0]).length;
-                if (!satisfies(cnt, count, scope)) return false;
+                if (!satisfies(cnt, count, scope)) {
+                    failLog(`评分≥${vals[0]}球员数 ${cnt} 不满足 ${scope} ${count}`);
+                    return false;
+                }
             }
             else if (key === "PLAYER_MAX_OVR") {
                 const cnt = players.filter(p => p.rating <= vals[0]).length;
-                if (!satisfies(cnt, count, scope)) return false;
+                if (!satisfies(cnt, count, scope)) {
+                    failLog(`评分≤${vals[0]}球员数 ${cnt} 不满足 ${scope} ${count}`);
+                    return false;
+                }
             }
             else if (key === "PLAYER_EXACT_OVR") {
                 const cnt = players.filter(p => p.rating >= vals[0]).length;
-                if (!satisfies(cnt, count, scope)) return false;
+                if (!satisfies(cnt, count, scope)) {
+                    failLog(`评分≥${vals[0]}球员数 ${cnt} 不满足 ${scope} ${count}`);
+                    return false;
+                }
             }
             else if (key === "PLAYER_QUALITY") {
                 const cnt = players.filter(p => satisfies(p.ratingTier, vals[0], scope)).length;
-                if (cnt < count) return false;
+                if (cnt < count) {
+                    failLog(`quality匹配球员数 ${cnt} < ${count}`);
+                    return false;
+                }
             }
             else if (key === "PLAYER_LEVEL") {
                 const cnt = players.filter(p => vals.some(v => Array.isArray(v) ? v.includes(p.ratingTier) : v === p.ratingTier)).length;
-                if (cnt < count) return false;
+                if (cnt < count) {
+                    failLog(`level匹配球员数 ${cnt} < ${count}`);
+                    return false;
+                }
             }
             else if (key === "PLAYER_RARITY") {
                 const cnt = players.filter(p => vals.includes(p.rarityId)).length;
-                if (!satisfies(cnt, count, scope)) return false;
+                if (!satisfies(cnt, count, scope)) {
+                    failLog(`rarity匹配球员数 ${cnt} 不满足 ${scope} ${count}`);
+                    return false;
+                }
             }
             else if (key === "PLAYER_RARITY_GROUP") {
                 const cnt = players.filter(p => p.groups && p.groups.some(g => vals.includes(g))).length;
-                if (scope === "EXACT" && cnt !== count) return false;
-                if (scope === "GREATER" && cnt < count) return false;
-                if (scope === "LOWER" && cnt > count) return false;
+                if (scope === "EXACT" && cnt !== count) {
+                    failLog(`rarityGroup匹配球员数 ${cnt} !== ${count}`);
+                    return false;
+                }
+                if (scope === "GREATER" && cnt < count) {
+                    failLog(`rarityGroup匹配球员数 ${cnt} < ${count}`);
+                    return false;
+                }
+                if (scope === "LOWER" && cnt > count) {
+                    failLog(`rarityGroup匹配球员数 ${cnt} > ${count}`);
+                    return false;
+                }
             }
             else if (key === "SAME_CLUB_COUNT") {
                 // 使用 normalizeClubId 统计同一俱乐部的球员数，以支持男足/女足俱乐部归一化
@@ -1541,49 +1588,81 @@ GM_addStyle(`
                     clubCounts[clubId] = (clubCounts[clubId] || 0) + 1;
                 });
                 const maxSame = Math.max(...Object.values(clubCounts));
-                if (!satisfies(maxSame, vals[0], scope)) return false;
+                if (!satisfies(maxSame, vals[0], scope)) {
+                    failLog(`同俱乐部最多 ${maxSame} 不满足 ${scope} ${vals[0]}`);
+                    return false;
+                }
             }
             else if (key === "SAME_LEAGUE_COUNT") {
                 const leagueCounts2 = {};
                 players.forEach(p => { leagueCounts2[p.leagueId] = (leagueCounts2[p.leagueId] || 0) + 1; });
                 const maxSame = Math.max(...Object.values(leagueCounts2));
-                if (!satisfies(maxSame, vals[0], scope)) return false;
+                if (!satisfies(maxSame, vals[0], scope)) {
+                    failLog(`同联赛最多 ${maxSame} 不满足 ${scope} ${vals[0]}`);
+                    return false;
+                }
             }
             else if (key === "SAME_NATION_COUNT") {
                 const nationCounts2 = {};
                 players.forEach(p => { nationCounts2[p.nationId] = (nationCounts2[p.nationId] || 0) + 1; });
                 const maxSame = Math.max(...Object.values(nationCounts2));
-                if (!satisfies(maxSame, vals[0], scope)) return false;
+                if (!satisfies(maxSame, vals[0], scope)) {
+                    failLog(`同国籍最多 ${maxSame} 不满足 ${scope} ${vals[0]}`);
+                    return false;
+                }
             }
             else if (key === "CLUB_COUNT") {
                 // 使用 normalizeClubId 统计唯一俱乐部数，以支持男足/女足俱乐部归一化
                 // Use normalizeClubId to count unique clubs, supporting men's/women's club normalization
                 const uniqueClubs = new Set(players.map(p => p.normalizeClubId || p.teamId)).size;
-                if (!satisfies(uniqueClubs, vals[0], scope)) return false;
+                if (!satisfies(uniqueClubs, vals[0], scope)) {
+                    failLog(`俱乐部数 ${uniqueClubs} 不满足 ${scope} ${vals[0]}`);
+                    return false;
+                }
             }
             else if (key === "LEAGUE_COUNT") {
                 const uniqueLeagues = new Set(players.map(p => p.leagueId)).size;
-                if (!satisfies(uniqueLeagues, vals[0], scope)) return false;
+                if (!satisfies(uniqueLeagues, vals[0], scope)) {
+                    failLog(`联赛数 ${uniqueLeagues} 不满足 ${scope} ${vals[0]}`);
+                    return false;
+                }
             }
             else if (key === "NATION_COUNT") {
                 const uniqueNations = new Set(players.map(p => p.nationId)).size;
-                if (!satisfies(uniqueNations, vals[0], scope)) return false;
+                if (!satisfies(uniqueNations, vals[0], scope)) {
+                    failLog(`国籍数 ${uniqueNations} 不满足 ${scope} ${vals[0]}`);
+                    return false;
+                }
             }
             else if (key === "CLUB_ID") {
-                // 使用 normalizeClubId 而不是 teamId，以支持男足/女足俱乐部匹配
+                // 同时检查 teamId 和 normalizeClubId，以支持男足/女足俱乐部匹配
                 // 例如：女足皇马 teamId=116326 会被归一化为男足皇马 normalizeClubId=243
-                // Use normalizeClubId instead of teamId to support men's/women's club matching
+                // SBC约束中的 vals 可能是原始 teamId，球员可能用 normalizeClubId，所以需要双向匹配
+                // Check both teamId and normalizeClubId to support men's/women's club matching
                 // E.g., women's Real Madrid teamId=116326 is normalized to men's Real Madrid normalizeClubId=243
-                const cnt = players.filter(p => vals.includes(p.normalizeClubId || p.teamId)).length;
-                if (!satisfies(cnt, count, scope)) return false;
+                // vals in SBC may be raw teamId, player may use normalizeClubId, so need bidirectional matching
+                const cnt = players.filter(p => vals.includes(p.teamId) || vals.includes(p.normalizeClubId)).length;
+                if (!satisfies(cnt, count, scope)) {
+                    failLog(`指定俱乐部球员数 ${cnt} 不满足 ${scope} ${count}`);
+                    return false;
+                }
             }
             else if (key === "LEAGUE_ID") {
                 const cnt = players.filter(p => vals.includes(p.leagueId)).length;
-                if (!satisfies(cnt, count, scope)) return false;
+                if (!satisfies(cnt, count, scope)) {
+                    failLog(`指定联赛球员数 ${cnt} 不满足 ${scope} ${count}`);
+                    return false;
+                }
             }
             else if (key === "NATION_ID") {
                 const cnt = players.filter(p => vals.includes(p.nationId)).length;
-                if (!satisfies(cnt, count, scope)) return false;
+                if (!satisfies(cnt, count, scope)) {
+                    failLog(`指定国籍球员数 ${cnt} 不满足 ${scope} ${count}`);
+                    return false;
+                }
+            }
+            else {
+                if (debug) console.log(`[checkConstraints] 未知约束类型: ${key}`);
             }
         }
         return true;
@@ -2532,8 +2611,32 @@ GM_addStyle(`
             }
 
             if (!bestResult.feasible) {
+                // 求解失败时，打印详细的约束检查日志
+                console.log("[NoBrain SBC] ===== 求解失败，约束检查详情 =====");
+                console.log("[NoBrain SBC] 约束条件:", sbcData.constraints);
+                console.log("[NoBrain SBC] 球员池大小:", players.length);
+                console.log("[NoBrain SBC] 评分窗口:", windowFloor, "-", windowCap);
+                
+                // 尝试检查当前阵容
+                const debugSquad = _challenge.squad._players.slice(0, 11).map(m => {
+                    const p = playerById.get(m._item?.id);
+                    if (p) return p;
+                    // 如果是虚拟球员，尝试从players中找
+                    return players.find(pl => pl.definitionId === m._item?.definitionId) || null;
+                });
+                console.log("[NoBrain SBC] 当前阵容:");
+                debugSquad.forEach((p, i) => {
+                    if (p) {
+                        console.log(`  [${i}] ${p.name} (${p.rating}) - league:${p.leagueId}, club:${p.teamId}, nation:${p.nationId}`);
+                    } else {
+                        console.log(`  [${i}] 空`);
+                    }
+                });
+                checkConstraints(debugSquad, sbcData.formation, sbcData.constraints, true);
+                console.log("[NoBrain SBC] ===== 约束检查结束 =====");
+                
                 hideLoader();
-                showNotification("求解失败：未找到可行解", UINotificationType.NEGATIVE);
+                showNotification("求解失败：未找到可行解（详见控制台）", UINotificationType.NEGATIVE);
                 return;
             }
 
@@ -4063,9 +4166,7 @@ GM_addStyle(`
         getPrice: getPrice,
         fetchPlayerPrices: fetchAndCachePrices,
         cachedPriceItems: () => cachedPriceItems,
-        // 常量
-        services: services,
-        repositories: repositories,
+        // 控制器辅助
         cntlr: cntlr
     };
 
