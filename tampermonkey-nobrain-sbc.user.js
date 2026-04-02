@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.55
+// @version      0.56
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       harveyhu2012
 // @homepage     https://github.com/harveyhu2012/nobrain-sbc
@@ -2275,14 +2275,36 @@ GM_addStyle(`
         showNotification(L("notify.solving"), UINotificationType.POSITIVE);
 
         try {
+            // 初始化化学值工具（需要在构建约束前初始化，用于normalizeClubId）
+            // Initialize chem util before building constraints (needed for normalizeClubId)
+            const chemUtil = new UTSquadChemCalculatorUtils();
+            chemUtil.chemService = services.Chemistry;
+            chemUtil.teamConfigRepo = repositories.TeamConfig;
+
             // 从挑战赛构建sbcData / Build sbcData from challenge
             const challengeRequirements = _challenge.eligibilityRequirements.map(eligibility => {
                 const keys = Object.keys(eligibility.kvPairs._collection);
+                const reqKey = SBCEligibilityKey[keys[0]];
+                let vals = eligibility.kvPairs._collection[keys[0]];
+                
+                // 对 CLUB_ID 约束进行 normalize，使男足球员能匹配女足俱乐部约束
+                // Normalize CLUB_ID constraints so men's players can match women's club requirements
+                if (reqKey === "CLUB_ID" && Array.isArray(vals)) {
+                    const normalizedVals = new Set(vals);
+                    vals.forEach(v => {
+                        const normalized = chemUtil.normalizeClubId(v);
+                        if (normalized && normalized !== v) {
+                            normalizedVals.add(normalized);
+                        }
+                    });
+                    vals = [...normalizedVals];
+                }
+                
                 return {
                     scope: SBCEligibilityScope[eligibility.scope],
                     count: eligibility.count,
-                    requirementKey: SBCEligibilityKey[keys[0]],
-                    eligibilityValues: eligibility.kvPairs._collection[keys[0]],
+                    requirementKey: reqKey,
+                    eligibilityValues: vals,
                 };
             });
 
@@ -2328,10 +2350,7 @@ GM_addStyle(`
                 }
             }
 
-            // 初始化化学值工具（normalizeClubId和maxChem）/ Setup chem util for normalizeClubId and maxChem
-            const chemUtil = new UTSquadChemCalculatorUtils();
-            chemUtil.chemService = services.Chemistry;
-            chemUtil.teamConfigRepo = repositories.TeamConfig;
+            // 使用之前初始化的 chemUtil 设置球员的化学值信息 / Use chemUtil initialized earlier to set player chemistry info
             rawPlayers.forEach(item => {
                 item.profile = chemUtil.getChemProfileForPlayer(item);
                 item.normalizeClubId = chemUtil.normalizeClubId(item.teamId);
@@ -2611,11 +2630,86 @@ GM_addStyle(`
             }
 
             if (!bestResult.feasible) {
-                // 求解失败时，打印详细的约束检查日志
+                // 求解失败时，分析具体失败原因
                 console.log("[NoBrain SBC] ===== 求解失败，约束检查详情 =====");
                 console.log("[NoBrain SBC] 约束条件:", sbcData.constraints);
                 console.log("[NoBrain SBC] 球员池大小:", players.length);
                 console.log("[NoBrain SBC] 评分窗口:", windowFloor, "-", windowCap);
+                
+                // 分析每个约束是否可满足
+                const failedReasons = [];
+                for (const req of sbcData.constraints) {
+                    const key = req.requirementKey;
+                    const scope = req.scope;
+                    const count = req.count;
+                    const vals = req.eligibilityValues;
+                    
+                    // 检查球员池中是否有足够的特定属性球员
+                    if (key === "CLUB_ID") {
+                        // 同时检查 teamId 和 normalizeClubId
+                        const clubPlayers = players.filter(p => vals.includes(p.teamId) || vals.includes(p.normalizeClubId));
+                        const requiredCount = scope === "GREATER" ? count : (scope === "EXACT" ? count : 1);
+                        if (clubPlayers.length < requiredCount) {
+                            failedReasons.push({
+                                key,
+                                message: nobrainLang === 0 
+                                    ? `缺少来自指定俱乐部（${vals.join(' 或 ')}）的球员，需要 ${requiredCount} 个，球员池仅有 ${clubPlayers.length} 个`
+                                    : `Missing players from specified club(s) (${vals.join(' or ')}), need ${requiredCount}, pool has ${clubPlayers.length}`,
+                                detail: { vals, requiredCount, available: clubPlayers.length }
+                            });
+                            console.log(`[NoBrain SBC] 约束 ${key} 不可满足: vals=${vals.join(',')}, 需要=${requiredCount}, 球员池有=${clubPlayers.length}`);
+                        }
+                    } else if (key === "LEAGUE_ID") {
+                        const leaguePlayers = players.filter(p => vals.includes(p.leagueId));
+                        const requiredCount = scope === "GREATER" ? count : (scope === "EXACT" ? count : 1);
+                        if (leaguePlayers.length < requiredCount) {
+                            failedReasons.push({
+                                key,
+                                message: nobrainLang === 0
+                                    ? `缺少来自指定联赛（${vals.join(' 或 ')}）的球员，需要 ${requiredCount} 个，球员池仅有 ${leaguePlayers.length} 个`
+                                    : `Missing players from specified league(s) (${vals.join(' or ')}), need ${requiredCount}, pool has ${leaguePlayers.length}`,
+                                detail: { vals, requiredCount, available: leaguePlayers.length }
+                            });
+                            console.log(`[NoBrain SBC] 约束 ${key} 不可满足: vals=${vals.join(',')}, 需要=${requiredCount}, 球员池有=${leaguePlayers.length}`);
+                        }
+                    } else if (key === "NATION_ID") {
+                        const nationPlayers = players.filter(p => vals.includes(p.nationId));
+                        const requiredCount = scope === "GREATER" ? count : (scope === "EXACT" ? count : 1);
+                        if (nationPlayers.length < requiredCount) {
+                            failedReasons.push({
+                                key,
+                                message: nobrainLang === 0
+                                    ? `缺少来自指定国籍（${vals.join(' 或 ')}）的球员，需要 ${requiredCount} 个，球员池仅有 ${nationPlayers.length} 个`
+                                    : `Missing players from specified nation(s) (${vals.join(' or ')}), need ${requiredCount}, pool has ${nationPlayers.length}`,
+                                detail: { vals, requiredCount, available: nationPlayers.length }
+                            });
+                            console.log(`[NoBrain SBC] 约束 ${key} 不可满足: vals=${vals.join(',')}, 需要=${requiredCount}, 球员池有=${nationPlayers.length}`);
+                        }
+                    } else if (key === "PLAYER_RARITY") {
+                        const rarityPlayers = players.filter(p => vals.includes(p.rarityId));
+                        const requiredCount = scope === "GREATER" ? count : (scope === "EXACT" ? count : 1);
+                        if (rarityPlayers.length < requiredCount) {
+                            failedReasons.push({
+                                key,
+                                message: nobrainLang === 0
+                                    ? `缺少指定稀有度的球员，需要 ${requiredCount} 个，球员池仅有 ${rarityPlayers.length} 个`
+                                    : `Missing players with specified rarity, need ${requiredCount}, pool has ${rarityPlayers.length}`,
+                                detail: { vals, requiredCount, available: rarityPlayers.length }
+                            });
+                        }
+                    } else if (key === "PLAYER_MIN_OVR") {
+                        const highRatedPlayers = players.filter(p => p.rating >= vals[0]);
+                        if (highRatedPlayers.length < count) {
+                            failedReasons.push({
+                                key,
+                                message: nobrainLang === 0
+                                    ? `缺少评分≥${vals[0]}的球员，需要 ${count} 个，球员池仅有 ${highRatedPlayers.length} 个`
+                                    : `Missing players with rating≥${vals[0]}, need ${count}, pool has ${highRatedPlayers.length}`,
+                                detail: { minRating: vals[0], requiredCount: count, available: highRatedPlayers.length }
+                            });
+                        }
+                    }
+                }
                 
                 // 尝试检查当前阵容
                 const debugSquad = _challenge.squad._players.slice(0, 11).map(m => {
@@ -2636,7 +2730,16 @@ GM_addStyle(`
                 console.log("[NoBrain SBC] ===== 约束检查结束 =====");
                 
                 hideLoader();
-                showNotification("求解失败：未找到可行解（详见控制台）", UINotificationType.NEGATIVE);
+                
+                // 显示具体的失败原因
+                if (failedReasons.length > 0) {
+                    // 优先显示 CLUB_ID/LEAGUE_ID/NATION_ID 相关的失败原因
+                    const priorityReason = failedReasons.find(r => ["CLUB_ID", "LEAGUE_ID", "NATION_ID"].includes(r.key));
+                    const message = priorityReason ? priorityReason.message : failedReasons[0].message;
+                    showNotification(message, UINotificationType.NEGATIVE);
+                } else {
+                    showNotification(nobrainLang === 0 ? "求解失败：未找到可行解（详见控制台）" : "Solve failed: no feasible solution (see console)", UINotificationType.NEGATIVE);
+                }
                 return;
             }
 
