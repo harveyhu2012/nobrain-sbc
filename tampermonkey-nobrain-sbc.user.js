@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.53
+// @version      0.54
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       harveyhu2012
 // @homepage     https://github.com/harveyhu2012/nobrain-sbc
@@ -4058,6 +4058,11 @@ GM_addStyle(`
         showLoader: showLoader,
         hideLoader: hideLoader,
         showNotification: showNotification,
+        // 价格相关函数
+        loadPriceItems: loadPriceItems,
+        getPrice: getPrice,
+        fetchPlayerPrices: fetchAndCachePrices,
+        cachedPriceItems: () => cachedPriceItems,
         // 常量
         services: services,
         repositories: repositories,
