@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.56
+// @version      0.57
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       harveyhu2012
 // @homepage     https://github.com/harveyhu2012/nobrain-sbc
@@ -343,6 +343,38 @@ GM_addStyle(`
     .phone .nobrain-quick-list .im {
         font-size: 0.875rem;
     }
+    /* 分值球员库样式 / Rating Players Pool Styles */
+    .nobrain-rating-pool-status {
+        font-size: 13px;
+        margin-bottom: 12px;
+    }
+    .nobrain-rating-pool-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 4px 0;
+        font-size: 13px;
+    }
+    .nobrain-rating-pool-row .rating-label {
+        flex: 1;
+    }
+    .nobrain-rating-pool-row .count {
+        color: #f5c518;
+        margin-right: 8px;
+    }
+    .nobrain-rating-pool-row .status-icon {
+        font-size: 12px;
+    }
+    .nobrain-rating-pool-btns {
+        display: flex;
+        gap: 8px;
+        margin-top: 16px;
+    }
+    .nobrain-rating-pool-progress {
+        font-size: 12px;
+        opacity: 0.7;
+        margin-top: 8px;
+    }
 `);
 
 (function () {
@@ -471,6 +503,15 @@ GM_addStyle(`
         "ms.search":                    ["搜索... / Search...", "Search..."],
         "ms.placeholder":               ["点击选择... / Click to select...", "Click to select..."],
         "ms.empty":                     ["无结果 / No results", "No results"],
+        // 分值球员库 / Rating Players Pool
+        "settings.tabRatingPool":       ["球员库", "Player Pool"],
+        "btn.initRatingPool":           ["初始化球员库", "Init Player Pool"],
+        "btn.clearRatingPool":          ["清空球员库", "Clear Pool"],
+        "btn.initRatingPoolDone":       ["球员库初始化完成: %1人", "Pool initialized: %1 players"],
+        "btn.clearRatingPoolDone":      ["球员库已清空", "Pool cleared"],
+        "rating.poolCount":             ["%1分: %2人", "%1 rating: %2 players"],
+        "rating.poolNotInit":           ["未初始化", "Not initialized"],
+        "rating.fetchingPool":          ["正在获取球员库...", "Fetching player pool..."],
     };
     const L = (key, ...params) => {
         let text = nobrainLocale.hasOwnProperty(key) ? nobrainLocale[key][nobrainLang] : key;
@@ -1163,6 +1204,7 @@ GM_addStyle(`
                     <button class="nobrain-tab" data-tab="players">${L("settings.tabPlayers")}</button>
                     <button class="nobrain-tab" data-tab="league">${L("settings.tabLeague")}</button>
                     <button class="nobrain-tab" data-tab="ui">${L("settings.ui")}</button>
+                    <button class="nobrain-tab" data-tab="ratingPool">${L("settings.tabRatingPool")}</button>
                 </div>
                 <div class="nobrain-tab-panel active" data-panel="algo">
                     ${makeNumberRows(ALGO_NUMBERS)}
@@ -1197,6 +1239,15 @@ GM_addStyle(`
                         <label></label>
                         <button class="btn-standard mini" id="nobrain-clear-price-cache"><span class="button__text">${L("btn.clearPriceCache")}</span></button>
                     </div>
+                </div>
+                <div class="nobrain-tab-panel" data-panel="ratingPool">
+                    <div class="nobrain-rating-pool-status" id="nobrain-rating-pool-status">${L("rating.poolNotInit")}</div>
+                    <div id="nobrain-rating-pool-counts"></div>
+                    <div class="nobrain-rating-pool-btns">
+                        <button class="btn-standard mini" id="nobrain-init-rating-pool"><span class="button__text">${L("btn.initRatingPool")}</span></button>
+                        <button class="btn-standard mini" id="nobrain-clear-rating-pool"><span class="button__text">${L("btn.clearRatingPool")}</span></button>
+                    </div>
+                    <div class="nobrain-rating-pool-progress" id="nobrain-rating-pool-progress"></div>
                 </div>
                 <div class="nobrain-settings-footer">
                     <button class="btn-standard mini" id="nobrain-settings-reset"><span class="button__text">${L("settings.reset")}</span></button>
@@ -1288,6 +1339,57 @@ GM_addStyle(`
             setTimeout(() => { btn.textContent = L("btn.clearPriceCache"); }, 1500);
         });
 
+        // 分值球员库管理 / Rating Players Pool management
+        const ratingPoolStatus = overlay.querySelector("#nobrain-rating-pool-status");
+        const ratingPoolCounts = overlay.querySelector("#nobrain-rating-pool-counts");
+        const ratingPoolProgress = overlay.querySelector("#nobrain-rating-pool-progress");
+        
+        const updateRatingPoolUI = async () => {
+            const pool = await loadRatingPlayersPool();
+            const ratings = Object.keys(pool).map(Number).filter(r => r >= 84 && r <= 91).sort((a, b) => b - a);
+            if (ratings.length === 0) {
+                ratingPoolStatus.textContent = L("rating.poolNotInit");
+                ratingPoolCounts.innerHTML = "";
+                return;
+            }
+            let totalCount = 0;
+            let html = "";
+            for (const rating of ratings) {
+                const count = pool[rating]?.players?.length || 0;
+                totalCount += count;
+                html += `<div class="nobrain-rating-pool-row"><span class="rating-label">${L("rating.poolCount", rating, count)}</span></div>`;
+            }
+            ratingPoolStatus.textContent = L("btn.initRatingPoolDone", totalCount);
+            ratingPoolCounts.innerHTML = html;
+        };
+        updateRatingPoolUI();
+
+        overlay.querySelector("#nobrain-init-rating-pool").addEventListener("click", async () => {
+            const btn = overlay.querySelector("#nobrain-init-rating-pool");
+            btn.disabled = true;
+            ratingPoolProgress.textContent = L("rating.fetchingPool");
+            try {
+                const count = await refreshRatingPlayersPool((msg) => {
+                    ratingPoolProgress.textContent = msg;
+                });
+                await updateRatingPoolUI();
+                showNotification(L("btn.initRatingPoolDone", count), UINotificationType.POSITIVE);
+            } catch (e) {
+                console.error("[NoBrainSBC] Init rating pool error", e);
+                showNotification(nobrainLang === 0 ? "初始化失败" : "Init failed", UINotificationType.NEGATIVE);
+            } finally {
+                btn.disabled = false;
+                ratingPoolProgress.textContent = "";
+            }
+        });
+
+        overlay.querySelector("#nobrain-clear-rating-pool").addEventListener("click", async () => {
+            await clearRatingPlayersPool();
+            ratingPoolStatus.textContent = L("rating.poolNotInit");
+            ratingPoolCounts.innerHTML = "";
+            showNotification(L("btn.clearRatingPoolDone"), UINotificationType.POSITIVE);
+        });
+
         document.body.appendChild(overlay);
 
         // Tab 切换逻辑 / Tab switching logic
@@ -1320,6 +1422,210 @@ GM_addStyle(`
                 if (tab.dataset.tab === "players") loadPlayersTab();
             });
         });
+    };
+
+    // ─── 分值球员库 / Rating Players Pool ──────────────────────────────────────────
+    const RATING_PLAYERS_DB_VERSION = 3;
+    let _ratingPlayersPool = null;
+    let _loadRatingPlayersPoolPromise = null;
+
+    const loadRatingPlayersPool = () => {
+        if (_ratingPlayersPool) return Promise.resolve(_ratingPlayersPool);
+        if (_loadRatingPlayersPoolPromise) return _loadRatingPlayersPoolPromise;
+        _loadRatingPlayersPoolPromise = new Promise((resolve) => {
+            const request = indexedDB.open("futSBCDatabase", RATING_PLAYERS_DB_VERSION);
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains("priceItems")) {
+                    db.createObjectStore("priceItems", { keyPath: "id" });
+                }
+                if (!db.objectStoreNames.contains("ratingPlayersPool")) {
+                    db.createObjectStore("ratingPlayersPool", { keyPath: "rating" });
+                }
+            };
+            request.onsuccess = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains("ratingPlayersPool")) {
+                    _ratingPlayersPool = {};
+                    _loadRatingPlayersPoolPromise = null;
+                    resolve({});
+                    return;
+                }
+                const tx = db.transaction(["ratingPlayersPool"], "readonly");
+                const store = tx.objectStore("ratingPlayersPool");
+                const getAll = store.getAll();
+                getAll.onsuccess = (e) => {
+                    const items = e.target.result || [];
+                    _ratingPlayersPool = {};
+                    items.forEach(item => {
+                        _ratingPlayersPool[item.rating] = item;
+                    });
+                    _loadRatingPlayersPoolPromise = null;
+                    resolve(_ratingPlayersPool);
+                };
+                getAll.onerror = () => { _ratingPlayersPool = {}; _loadRatingPlayersPoolPromise = null; resolve({}); };
+            };
+            request.onerror = () => { _ratingPlayersPool = {}; _loadRatingPlayersPoolPromise = null; resolve({}); };
+        });
+        return _loadRatingPlayersPoolPromise;
+    };
+
+    const saveRatingPlayersPool = (pool) => {
+        return new Promise((resolve) => {
+            const request = indexedDB.open("futSBCDatabase", RATING_PLAYERS_DB_VERSION);
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains("priceItems")) {
+                    db.createObjectStore("priceItems", { keyPath: "id" });
+                }
+                if (!db.objectStoreNames.contains("ratingPlayersPool")) {
+                    db.createObjectStore("ratingPlayersPool", { keyPath: "rating" });
+                }
+            };
+            request.onsuccess = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains("ratingPlayersPool")) { resolve(); return; }
+                const tx = db.transaction(["ratingPlayersPool"], "readwrite");
+                const store = tx.objectStore("ratingPlayersPool");
+                store.clear();
+                for (const rating of Object.keys(pool)) {
+                    store.put(pool[rating]);
+                }
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => resolve();
+            };
+            request.onerror = () => resolve();
+        });
+    };
+
+    const clearRatingPlayersPool = async () => {
+        _ratingPlayersPool = {};
+        await saveRatingPlayersPool({});
+    };
+
+    const fetchAllConceptPlayers = async (onProgress) => {
+        const allPlayers = [];
+        const targetRatings = [84, 85, 86, 87, 88, 89, 90, 91];
+        let totalCount = 0;
+        
+        // 获取金卡虚拟球员，按评分排序，遇到<84分时停止
+        // Fetch gold concept players, sorted by rating, stop when <84
+        if (onProgress) onProgress("获取84+分金卡虚拟球员...");
+        
+        let offset = 0;
+        const batchSize = 91;
+        let allConceptPlayers = [];
+        let shouldContinue = true;
+        
+        const fetchBatch = () => {
+            return new Promise((resolve) => {
+                if (!shouldContinue) {
+                    resolve();
+                    return;
+                }
+                
+                if (!services?.Item?.searchConceptItems) {
+                    resolve();
+                    return;
+                }
+                
+                const searchCriteria = new UTBucketedItemSearchViewModel().searchCriteria;
+                searchCriteria.offset = offset;
+                searchCriteria.count = batchSize;
+                searchCriteria.level = "gold";
+                searchCriteria.rarities = [1];
+                searchCriteria.sortBy = SearchSortType.RATING;
+                
+                services.Item.searchConceptItems(searchCriteria).observe(undefined, (sender, response) => {
+                    const items = response?.response?.items || [];
+                    
+                    const hasLowRating = items.some(p => p.rating < 84);
+                    if (hasLowRating) {
+                        shouldContinue = false;
+                    }
+                    
+                    const goldItems = items.filter(p => p.rating >= 84 && p.rareflag <= 1);
+                    allConceptPlayers.push(...goldItems);
+                    
+                    const endOfList = response?.response?.endOfList;
+                    const hasMore = items.length === batchSize && !endOfList && shouldContinue;
+                    
+                    if (hasMore && allConceptPlayers.length < 3000) {
+                        offset += batchSize;
+                        if (onProgress) onProgress(`已获取 ${allConceptPlayers.length} 人...`);
+                        fetchBatch().then(resolve);
+                    } else {
+                        resolve();
+                    }
+                });
+            });
+        };
+        
+        await fetchBatch();
+        
+        // 过滤掉重复的 definitionId
+        const seenDefIds = new Set();
+        const uniquePlayers = allConceptPlayers.filter(p => {
+            if (seenDefIds.has(p.definitionId)) return false;
+            seenDefIds.add(p.definitionId);
+            return true;
+        });
+        
+        // 按评分分组统计
+        for (const rating of targetRatings) {
+            const ratingPlayers = uniquePlayers.filter(p => p.rating === rating);
+            allPlayers.push(...ratingPlayers.map(p => ({
+                definitionId: p.definitionId,
+                name: p._staticData?.name || String(p.definitionId),
+                rating: p.rating
+            })));
+            totalCount += ratingPlayers.length;
+            if (onProgress) onProgress(`${rating}分: ${ratingPlayers.length}人 (总计: ${totalCount}人)`);
+        }
+        
+        return allPlayers;
+    };
+
+    const refreshRatingPlayersPool = async (onProgress) => {
+        const pool = {};
+        const targetRatings = [84, 85, 86, 87, 88, 89, 90, 91];
+        
+        // 初始化池结构
+        for (const rating of targetRatings) {
+            pool[rating] = {
+                rating,
+                players: [],
+                lastUpdated: new Date().toISOString()
+            };
+        }
+        
+        // 获取虚拟球员
+        if (onProgress) onProgress("获取虚拟球员库...");
+        const conceptPlayers = await fetchAllConceptPlayers(onProgress);
+        
+        // 按分值分组
+        for (const player of conceptPlayers) {
+            const rating = player.rating;
+            if (pool[rating]) {
+                pool[rating].players.push({
+                    definitionId: player.definitionId,
+                    name: player.name
+                });
+            }
+        }
+        
+        
+        // 保存到IndexedDB
+        await saveRatingPlayersPool(pool);
+        _ratingPlayersPool = pool;
+        
+        // 计算总数
+        let totalCount = 0;
+        for (const rating of targetRatings) {
+            totalCount += pool[rating].players.length;
+        }
+        
+        return totalCount;
     };
 
     // ─── 固定/锁定球员 / Fixed / Locked Items ────────────────────────────────────
