@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         EAFC 26 Nobrain SBC
 // @namespace    http://tampermonkey.net/
-// @version      0.57
+// @version      0.58
 // @description  SBC求解器，贪心+爬山算法 / SBC solver using greedy + hill climbing
 // @author       harveyhu2012
 // @homepage     https://github.com/harveyhu2012/nobrain-sbc
@@ -375,6 +375,96 @@ GM_addStyle(`
         opacity: 0.7;
         margin-top: 8px;
     }
+    /* 分值购买面板样式 / Rating Buy Panel Styles */
+    .nobrain-rating-buy-panel {
+        padding: 0.75rem;
+        background: rgba(17,24,39,0.9);
+        border: 1px solid rgba(255,255,255,0.15);
+        border-radius: 10px;
+        display: none;
+        flex-direction: column;
+        gap: 0.5rem;
+        max-height: 80vh;
+        overflow: hidden;
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 9999;
+        min-width: 300px;
+        box-shadow: 0 12px 24px rgba(0,0,0,0.45);
+        box-sizing: border-box;
+    }
+    .nobrain-rating-buy-panel .panel-title {
+        font-weight: bold;
+        font-size: 14px;
+        margin-bottom: 0.25rem;
+    }
+    .nobrain-rating-buy-panel .panel-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        font-size: 13px;
+    }
+    .nobrain-rating-buy-panel .panel-row label {
+        flex: 1;
+    }
+    .nobrain-rating-buy-panel .panel-row select,
+    .nobrain-rating-buy-panel .panel-row input {
+        width: 100px;
+        background: var(--ut-color-background-secondary, #2a2a3e);
+        color: inherit;
+        border: 1px solid var(--ut-color-border, #444);
+        border-radius: 4px;
+        padding: 4px 6px;
+        font-size: 13px;
+    }
+    .nobrain-rating-buy-panel .pool-status {
+        font-size: 12px;
+        opacity: 0.8;
+        margin-bottom: 0.25rem;
+    }
+    .nobrain-rating-buy-panel .progress-status {
+        font-size: 12px;
+        opacity: 0.7;
+        margin-top: 0.25rem;
+        text-align: center;
+    }
+    .nobrain-rating-buy-panel .btn-row {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 0.5rem;
+    }
+    /* 价格输入控件样式 / Price input control styles */
+    .price-input-container button:first-child {
+        background: #333;
+        color: #fff;
+        border: 1px solid #555;
+        border-radius: 4px 0 0 4px;
+        padding: 4px 8px;
+        font-size: 11px;
+        cursor: pointer;
+    }
+    .price-input-container button:last-child {
+        background: #333;
+        color: #fff;
+        border: 1px solid #555;
+        border-radius: 0 4px 4px 0;
+        padding: 4px 8px;
+        font-size: 11px;
+        cursor: pointer;
+    }
+    .price-input-container span {
+        background: #1a1a2e;
+        color: #f5c518;
+        border-top: 1px solid #444;
+        border-bottom: 1px solid #444;
+        padding: 4px 8px;
+        font-size: 11px;
+        flex: 1;
+        text-align: center;
+    }
 `);
 
 (function () {
@@ -512,6 +602,21 @@ GM_addStyle(`
         "rating.poolCount":             ["%1分: %2人", "%1 rating: %2 players"],
         "rating.poolNotInit":           ["未初始化", "Not initialized"],
         "rating.fetchingPool":          ["正在获取球员库...", "Fetching player pool..."],
+        // 分值购买 / Rating Buy
+        "btn.ratingBuy":                ["分购", "Rating Buy"],
+        "rating.title":                ["按分值购买", "Rating Buy"],
+        "rating.selectRating":          ["分值选择", "Select Rating"],
+        "rating.startPrice":            ["起步价(CBR)", "Start Price (CBR)"],
+        "rating.maxPrice":              ["上限价", "Max Price"],
+        "rating.quantity":              ["购买数量", "Quantity"],
+        "rating.poolStatus":            ["球员池: %1分共%2人", "Pool: %1 rating has %2 players"],
+        "rating.autoInitPool":          ["球员库未初始化，正在自动更新...", "Pool not initialized, auto-updating..."],
+        "rating.progress":              ["已购买 %1/%2", "Bought %1/%2"],
+        "rating.currentPlayer":         ["当前: %1 @ %2", "Current: %1 @ %2"],
+        "rating.closeToStop":           ["关闭窗口即停止购买", "Close to stop"],
+        "rating.noPool":                ["球员库未初始化", "Pool not initialized"],
+        "rating.allOwned":              ["所有球员已拥有", "All players owned"],
+        "rating.stop":                  ["停止", "Stop"],
     };
     const L = (key, ...params) => {
         let text = nobrainLocale.hasOwnProperty(key) ? nobrainLocale[key][nobrainLang] : key;
@@ -522,6 +627,65 @@ GM_addStyle(`
     // ─── 常量 / Constants ─────────────────────────────────────────────────────────
     const DEFAULT_SEARCH_BATCH_SIZE = 91;
     const HILL_CLIMB_MAX_ITER = 5000; // 默认值，运行时被设置覆盖 / fallback, overridden by settings at runtime
+    
+    // ─── 分值购买常量 / Rating Buy Constants ────────────────────────────────────
+    const DEFAULT_START_PRICE = {
+        84: 700,
+        85: 900,
+        86: 1100,
+        87: 1400,
+        88: 1800,
+        89: 2300,
+        90: 3000,
+        91: 4500
+    };
+    
+    // 价格减一档函数 / Price decrement function
+    const decrementPrice = (price) => {
+        return price <= 1000 ? price - 50 : price - 100;
+    };
+
+    // 获取起步价（最常见价格减一档）/ Get low price (most common price minus one step)
+    const getLowPrice = (rating) => {
+        const defaultPrice = DEFAULT_START_PRICE[rating] || 1000;
+        if (!cachedPriceItems) return defaultPrice;
+        
+        // 收集该分值的所有价格 / Collect all prices for this rating
+        const prices = [];
+        for (const key of Object.keys(cachedPriceItems)) {
+            if (key.endsWith("_CBR")) continue;
+            const entry = cachedPriceItems[key];
+            if (!entry || entry.rating !== rating || !entry.price || entry.isExtinct) continue;
+            prices.push(entry.price);
+        }
+        
+        if (prices.length === 0) return defaultPrice;
+        
+        // 找出最常见价格（众数）/ Find most common price (mode)
+        const priceCounts = new Map();
+        let maxCount = 0;
+        let modePrice = prices[0];
+        
+        for (const price of prices) {
+            const count = (priceCounts.get(price) || 0) + 1;
+            priceCounts.set(price, count);
+            if (count > maxCount) {
+                maxCount = count;
+                modePrice = price;
+            }
+        }
+        
+        // 最常见价格减一档 / Most common price minus one step
+        const lowPrice = decrementPrice(modePrice);
+        
+        // 确保不低于最低价的默认值 / Ensure not lower than default
+        return Math.max(lowPrice, defaultPrice);
+    };
+    
+    // 价格加价函数 / Price increment function
+    const incrementPrice = (price) => {
+        return price < 1000 ? price + 50 : price + 100;
+    };
 
     // ─── ai-sbc脚本检测 / AI-SBC Detection ──────────────────────────────────────
     const isAiSBCRunning = () => typeof window.fetchLivePlayerPrice === 'function';
@@ -721,20 +885,24 @@ GM_addStyle(`
 
     const updateCBRMinPrice = () => {
         if (!cachedPriceItems) return;
+        
         const minByRating = new Map();
+        
         for (const key of Object.keys(cachedPriceItems)) {
             if (key.endsWith("_CBR")) continue;
             const entry = cachedPriceItems[key];
-            if (!entry || typeof entry.rating !== "number") continue;
-            if (!entry.price || entry.isExtinct) continue;
+            if (!entry || typeof entry.rating !== "number" || !entry.price || entry.isExtinct) continue;
             const currentMin = minByRating.get(entry.rating) ?? Infinity;
             if (entry.price < currentMin) minByRating.set(entry.rating, entry.price);
         }
+        
+        // 更新 CBR
         for (const [rating, minPrice] of minByRating.entries()) {
             const cbrKey = `${rating}_CBR`;
             const existing = cachedPriceItems[cbrKey] || {};
             cachedPriceItems[cbrKey] = { ...existing, eaId: cbrKey, rating, price: minPrice, timeStamp: new Date(), isExtinct: false, source: "none" };
         }
+        
         savePriceItems();
     };
 
@@ -774,7 +942,20 @@ GM_addStyle(`
     const isPriceOld = (item) => {
         if (!cachedPriceItems || !(item?.definitionId in cachedPriceItems)) return true;
         const cached = cachedPriceItems[item.definitionId];
-        // SBC 或 Objective 奖励的价格永不过期 / SBC or Objective reward prices never expire
+        // SBC、Objective 价格永不过期 / SBC, Objective prices never expire
+        if (cached?.isSbc || cached?.isObjective) return false;
+        const expiryMin = Number(getOwnSettings().priceExpiry ?? SETTINGS_DEFAULTS.priceExpiry) || 60;
+        const FRESH_MS = expiryMin * 60 * 1000;
+        const timeStamp = new Date(cached?.timeStamp);
+        if (!timeStamp.getTime()) return true;
+        return (timeStamp.getTime() + FRESH_MS) < Date.now();
+    };
+
+    // 根据 definitionId 检查价格是否过期（用于分值球员库检查）/ Check if price is old by definitionId (for rating players pool)
+    const isPriceOldByDefId = (definitionId) => {
+        if (!cachedPriceItems || !(definitionId in cachedPriceItems)) return true;
+        const cached = cachedPriceItems[definitionId];
+        // SBC、Objective 价格永不过期 / SBC, Objective prices never expire
         if (cached?.isSbc || cached?.isObjective) return false;
         const expiryMin = Number(getOwnSettings().priceExpiry ?? SETTINGS_DEFAULTS.priceExpiry) || 60;
         const FRESH_MS = expiryMin * 60 * 1000;
@@ -793,9 +974,28 @@ GM_addStyle(`
     });
 
     const fetchAndCachePrices = async (players, onProgress, force = false) => {
-        const idsArray = [...new Set(players
+        // 1. 检查原有球员的价格过期情况 / Check price expiry for original players
+        let idsArray = [...new Set(players
             .filter((f) => (force || isPriceOld(f)) && f?.isPlayer?.())
             .map((p) => p.definitionId))];
+        
+        // 2. 检查分值球员库中球员的价格过期情况 / Check price expiry for rating players pool
+        const ratingPool = await loadRatingPlayersPool();
+        const targetRatings = [84, 85, 86, 87, 88, 89, 90, 91];
+        // 构建分值球员库的 definitionId -> rating 映射 / Build definitionId -> rating map from pool
+        const poolRatingMap = new Map();
+        for (const rating of targetRatings) {
+            const poolPlayers = ratingPool[rating]?.players || [];
+            for (const p of poolPlayers) {
+                if (isPriceOldByDefId(p.definitionId)) {
+                    idsArray.push(p.definitionId);
+                    poolRatingMap.set(p.definitionId, rating);
+                }
+            }
+        }
+        
+        // 去重 / Deduplicate
+        idsArray = [...new Set(idsArray)];
         if (idsArray.length === 0) return;
 
         const platform = getUserPlatform();
@@ -817,9 +1017,13 @@ GM_addStyle(`
                     json.forEach(item => { if (item.prices?.length) priceMap.set(item.definitionId, item.prices[0]); });
                     batch.forEach((definitionId, index) => {
                         const player = players.find(p => p.definitionId === definitionId);
-                        if (!player) return;
+                        // 如果不在传入的球员列表中，检查是否来自分值球员库
+                        // If not in passed players list, check if from rating players pool
+                        const poolRating = poolRatingMap.get(definitionId);
+                        const rating = player?.rating || poolRating || 0;
+                        const name = player?._staticData?.name || "";
                         const price = priceMap.get(definitionId);
-                        priceResponse[index] = { eaId: definitionId, price: price || null, rating: player.rating || 0, name: player._staticData?.name || "", isExtinct: !price, lastChecked: Date.now(), source: "futnext" };
+                        priceResponse[index] = { eaId: definitionId, price: price || null, rating, name, isExtinct: !price, lastChecked: Date.now(), source: "futnext" };
                     });
                 } else {
                     const params = batch.join("%2C");
@@ -845,9 +1049,13 @@ GM_addStyle(`
                         futnextJson.forEach(item => { if (item.prices?.length) priceMap.set(item.definitionId, item.prices[0]); });
                         batch.forEach((definitionId, index) => {
                             const player = players.find(p => p.definitionId === definitionId);
-                            if (!player) return;
+                            // 如果不在传入的球员列表中，检查是否来自分值球员库
+                            // If not in passed players list, check if from rating players pool
+                            const poolRating = poolRatingMap.get(definitionId);
+                            const rating = player?.rating || poolRating || 0;
+                            const name = player?._staticData?.name || "";
                             const price = priceMap.get(definitionId);
-                            priceResponse[index] = { eaId: definitionId, price: price || null, rating: player.rating || 0, name: player._staticData?.name || "", isExtinct: !price, lastChecked: Date.now(), source: "futnext" };
+                            priceResponse[index] = { eaId: definitionId, price: price || null, rating, name, isExtinct: !price, lastChecked: Date.now(), source: "futnext" };
                         });
                     } else {
                         if (json.data && Array.isArray(json.data)) {
@@ -857,7 +1065,12 @@ GM_addStyle(`
                                 const item = priceMap.get(definitionId);
                                 if (item) {
                                     const matchingPlayer = players.find(p => p.definitionId == definitionId);
-                                    priceResponse[index] = { ...item, rating: matchingPlayer?.rating || 0, name: matchingPlayer?._staticData?.name || "", source: "futgg" };
+                                    // 如果不在传入的球员列表中，检查是否来自分值球员库
+                                    // If not in passed players list, check if from rating players pool
+                                    const poolRating = poolRatingMap.get(definitionId);
+                                    const rating = matchingPlayer?.rating || poolRating || 0;
+                                    const name = matchingPlayer?._staticData?.name || "";
+                                    priceResponse[index] = { ...item, rating, name, source: "futgg" };
                                 }
                             });
                         }
@@ -3646,6 +3859,11 @@ GM_addStyle(`
             const buyBtnShort = createButton("idBuySquadInSquad", L("btn.buySquadShort"), async () => {
                 await doBuySquad(buyBtnShort);
             }, "im");
+            
+            // 创建"分购"按钮 / Create "Rating Buy" button
+            const ratingBuyBtn = createButton("idRatingBuyInSquad", L("btn.ratingBuy"), async () => {
+                await showRatingBuyPanel();
+            }, "im");
 
             const livePriceBtn = createButton("idLivePriceInSquad", L("btn.livePrice"), async () => {
                 if (livePriceBtn.dataset.running === "true") return;
@@ -3702,6 +3920,7 @@ GM_addStyle(`
             this._nobrainQuickOther.appendChild(clearBtn);
             this._nobrainQuickOther.appendChild(livePriceBtn);
             this._nobrainQuickOther.appendChild(buyBtnShort);
+            this._nobrainQuickOther.appendChild(ratingBuyBtn);
 
             // 插入到 FSU 容器左边 / Insert to the left of FSU container
             if (this._fsu?.quickOther) {
@@ -4372,7 +4591,7 @@ GM_addStyle(`
     const fetchAndCacheMarketPrice = fetchMarketPrice;
 
     const buyConceptPlayer = async (item, options = {}) => {
-        const { suppressNotifications = false } = options;
+        const { suppressNotifications = false, onPriceAttempt } = options;
         const notify = (message, type) => { if (!suppressNotifications) showNotification(message, type); };
 
         // 计算允许加价后的最高价格 / Compute max allowed price after N increment steps above baseline
@@ -4486,6 +4705,8 @@ GM_addStyle(`
                     const nextPrice = UTCurrencyInputControl?.getIncrementAboveVal?.(currentPrice);
                     if (typeof nextPrice === "number" && nextPrice > currentPrice && nextPrice <= maxAllowedPrice) {
                         currentPrice = nextPrice;
+                        // 通知调用方当前尝试的价格 / Notify caller of current attempt price
+                        if (onPriceAttempt) onPriceAttempt(nextPrice);
                         continue;
                     }
                     break;
@@ -4493,6 +4714,9 @@ GM_addStyle(`
                 
                 const freshPrice = freshListing._auction.buyNowPrice;
                 if (freshPrice > maxAllowedPrice) break;
+                
+                // 通知调用方当前尝试的价格 / Notify caller of current attempt price
+                if (onPriceAttempt) onPriceAttempt(freshPrice);
                 
                 const freshPriceLabel = freshPrice.toLocaleString();
                 bidResult = await doBid(freshListing, freshPrice);
@@ -4554,6 +4778,331 @@ GM_addStyle(`
         const _squad = getCurrentSquad();
         const squadPlayers = Array.isArray(_squad?._players) ? _squad._players : [];
         return squadPlayers.slice(0, 11).map((slot) => slot?._item).filter((item) => item && item.concept);
+    };
+
+    // ─── 分值购买功能 / Rating Buy Function ────────────────────────────────────────
+    const showRatingBuyPanel = async () => {
+        // 确保价格缓存已加载
+        await loadPriceItems();
+        
+        // 检查球员库是否已初始化
+        const pool = await loadRatingPlayersPool();
+        const hasPool = pool && Object.keys(pool).some(r => pool[r]?.players?.length > 0);
+        
+        // 创建面板
+        const panel = document.createElement("div");
+        panel.className = "nobrain-rating-buy-panel";
+        panel.id = "nobrain-rating-buy-panel";
+        panel.style.display = "flex";
+        
+        const closeBtn = document.createElement("button");
+        closeBtn.type = "button";
+        closeBtn.textContent = "×";
+        closeBtn.className = "nobrain-panel-close";
+        closeBtn.addEventListener("click", () => { panel.style.display = "none"; });
+        
+        const titleDiv = document.createElement("div");
+        titleDiv.className = "panel-title";
+        titleDiv.textContent = L("rating.title");
+        
+        const poolStatusDiv = document.createElement("div");
+        poolStatusDiv.className = "pool-status";
+        poolStatusDiv.id = "rating-buy-pool-status";
+        
+        // 分值选择
+        const ratingRow = document.createElement("div");
+        ratingRow.className = "panel-row";
+        const ratingLabel = document.createElement("label");
+        ratingLabel.textContent = L("rating.selectRating");
+        const ratingSelect = document.createElement("select");
+        ratingSelect.id = "rating-buy-select";
+        [84, 85, 86, 87, 88, 89, 90, 91].forEach(r => {
+            const opt = document.createElement("option");
+            opt.value = r;
+            opt.textContent = `${r}分`;
+            ratingSelect.appendChild(opt);
+        });
+        ratingRow.append(ratingLabel, ratingSelect);
+        
+        // 起步价(CBR) - 带加减按钮
+        const startPriceRow = document.createElement("div");
+        startPriceRow.className = "panel-row";
+        const startPriceLabel = document.createElement("label");
+        startPriceLabel.textContent = L("rating.startPrice");
+        const startPriceContainer = document.createElement("div");
+        startPriceContainer.className = "price-input-container";
+        startPriceContainer.style.display = "flex";
+        startPriceContainer.style.alignItems = "center";
+        startPriceContainer.style.width = "100px";
+        
+        const startPriceMinusBtn = document.createElement("button");
+        startPriceMinusBtn.textContent = "−";
+        
+        const startPriceDisplay = document.createElement("span");
+        startPriceDisplay.id = "rating-buy-start-price";
+        
+        const startPricePlusBtn = document.createElement("button");
+        startPricePlusBtn.textContent = "+";
+        
+        startPriceContainer.append(startPriceMinusBtn, startPriceDisplay, startPricePlusBtn);
+        startPriceRow.append(startPriceLabel, startPriceContainer);
+        
+        // 上限价 - 带加减按钮
+        const maxPriceRow = document.createElement("div");
+        maxPriceRow.className = "panel-row";
+        const maxPriceLabel = document.createElement("label");
+        maxPriceLabel.textContent = L("rating.maxPrice");
+        const maxPriceContainer = document.createElement("div");
+        maxPriceContainer.className = "price-input-container";
+        maxPriceContainer.style.display = "flex";
+        maxPriceContainer.style.alignItems = "center";
+        maxPriceContainer.style.width = "100px";
+        
+        const maxPriceMinusBtn = document.createElement("button");
+        maxPriceMinusBtn.textContent = "−";
+        
+        const maxPriceDisplay = document.createElement("span");
+        maxPriceDisplay.id = "rating-buy-max-price";
+        
+        const maxPricePlusBtn = document.createElement("button");
+        maxPricePlusBtn.textContent = "+";
+        
+        maxPriceContainer.append(maxPriceMinusBtn, maxPriceDisplay, maxPricePlusBtn);
+        maxPriceRow.append(maxPriceLabel, maxPriceContainer);
+        
+        // 购买数量 - 带加减按钮
+        const quantityRow = document.createElement("div");
+        quantityRow.className = "panel-row";
+        const quantityLabel = document.createElement("label");
+        quantityLabel.textContent = L("rating.quantity");
+        const quantityContainer = document.createElement("div");
+        quantityContainer.className = "price-input-container";
+        quantityContainer.style.display = "flex";
+        quantityContainer.style.alignItems = "center";
+        quantityContainer.style.width = "100px";
+        
+        const quantityMinusBtn = document.createElement("button");
+        quantityMinusBtn.textContent = "−";
+        
+        const quantityDisplay = document.createElement("span");
+        quantityDisplay.id = "rating-buy-quantity";
+        quantityDisplay.textContent = "1";
+        
+        const quantityPlusBtn = document.createElement("button");
+        quantityPlusBtn.textContent = "+";
+        
+        quantityContainer.append(quantityMinusBtn, quantityDisplay, quantityPlusBtn);
+        quantityRow.append(quantityLabel, quantityContainer);
+        
+        // 进度状态
+        const progressDiv = document.createElement("div");
+        progressDiv.className = "progress-status";
+        progressDiv.id = "rating-buy-progress";
+        
+        // 按钮行
+        const btnRow = document.createElement("div");
+        btnRow.className = "btn-row";
+        const startBtn = document.createElement("button");
+        startBtn.className = "btn-standard mini";
+        startBtn.id = "rating-buy-start-btn";
+        startBtn.innerHTML = `<span class="button__text">${L("rating.title")}</span>`;
+        btnRow.appendChild(startBtn);
+        
+        panel.append(closeBtn, titleDiv, poolStatusDiv, ratingRow, startPriceRow, maxPriceRow, quantityRow, progressDiv, btnRow);
+        document.body.appendChild(panel);
+        
+        // 更新函数
+        const updatePanel = () => {
+            const rating = parseInt(ratingSelect.value);
+            const lowPrice = getLowPrice(rating);
+            console.log(`[NoBrainSBC] Rating ${rating} low price: ${lowPrice}`);
+            startPriceDisplay.textContent = lowPrice.toLocaleString();
+            
+            const maxIncrements = getOwnSettings().maxPriceIncrements ?? (SETTINGS_DEFAULTS.maxPriceIncrements || 1);
+            let maxPrice = lowPrice;
+            for (let i = 0; i < maxIncrements; i++) {
+                maxPrice = incrementPrice(maxPrice);
+            }
+            maxPriceDisplay.textContent = maxPrice.toLocaleString();
+            
+            const poolCount = pool[rating]?.players?.length || 0;
+            poolStatusDiv.textContent = L("rating.poolStatus", rating, poolCount);
+        };
+        
+        ratingSelect.addEventListener("change", updatePanel);
+        updatePanel();
+        
+        // 起步价加减按钮事件 / Start price increment/decrement button events
+        startPriceMinusBtn.addEventListener("click", () => {
+            let currentPrice = parseInt(startPriceDisplay.textContent.replace(/,/g, '')) || 0;
+            const defaultPrice = DEFAULT_START_PRICE[parseInt(ratingSelect.value)] || 1000;
+            const newPrice = Math.max(decrementPrice(currentPrice), defaultPrice);
+            startPriceDisplay.textContent = newPrice.toLocaleString();
+        });
+        
+        startPricePlusBtn.addEventListener("click", () => {
+            let currentPrice = parseInt(startPriceDisplay.textContent.replace(/,/g, '')) || 0;
+            const newPrice = incrementPrice(currentPrice);
+            startPriceDisplay.textContent = newPrice.toLocaleString();
+        });
+        
+        // 上限价加减按钮事件 / Max price increment/decrement button events
+        maxPriceMinusBtn.addEventListener("click", () => {
+            let currentPrice = parseInt(maxPriceDisplay.textContent.replace(/,/g, '')) || 0;
+            const startPrice = parseInt(startPriceDisplay.textContent.replace(/,/g, '')) || 0;
+            const newPrice = Math.max(decrementPrice(currentPrice), startPrice);
+            maxPriceDisplay.textContent = newPrice.toLocaleString();
+        });
+        
+        maxPricePlusBtn.addEventListener("click", () => {
+            let currentPrice = parseInt(maxPriceDisplay.textContent.replace(/,/g, '')) || 0;
+            const newPrice = incrementPrice(currentPrice);
+            maxPriceDisplay.textContent = newPrice.toLocaleString();
+        });
+        
+        // 购买数量加减按钮事件 / Quantity increment/decrement button events
+        quantityMinusBtn.addEventListener("click", () => {
+            let currentQty = parseInt(quantityDisplay.textContent) || 1;
+            const newQty = Math.max(1, currentQty - 1);
+            quantityDisplay.textContent = newQty;
+        });
+        
+        quantityPlusBtn.addEventListener("click", () => {
+            let currentQty = parseInt(quantityDisplay.textContent) || 1;
+            const newQty = currentQty + 1;
+            quantityDisplay.textContent = newQty;
+        });
+        
+        // 如果球员库未初始化，自动初始化
+        if (!hasPool) {
+            progressDiv.textContent = L("rating.autoInitPool");
+            try {
+                await refreshRatingPlayersPool((msg) => {
+                    progressDiv.textContent = msg;
+                });
+                await loadRatingPlayersPool();
+                progressDiv.textContent = "";
+                updatePanel();
+            } catch (e) {
+                progressDiv.textContent = L("rating.noPool");
+                return;
+            }
+        }
+        
+        // 取消标志
+        let cancelled = false;
+        
+        // 开始购买按钮
+        startBtn.addEventListener("click", async () => {
+            if (startBtn.dataset.running === "true") {
+                // 正在运行时点击，取消购买
+                cancelled = true;
+                return;
+            }
+            
+            const rating = parseInt(ratingSelect.value);
+            const startPrice = parseInt(startPriceDisplay.textContent.replace(/,/g, ''));
+            const maxPrice = parseInt(maxPriceDisplay.textContent.replace(/,/g, ''));
+            const quantity = parseInt(quantityDisplay.textContent) || 1;
+            
+            startBtn.dataset.running = "true";
+            startBtn.innerHTML = `<span class="button__text">${L("rating.stop")}</span>`;
+            cancelled = false;
+            
+            await doRatingBuy(rating, startPrice, maxPrice, quantity, progressDiv, panel, () => cancelled);
+            
+            delete startBtn.dataset.running;
+            startBtn.innerHTML = `<span class="button__text">${L("rating.title")}</span>`;
+        });
+    };
+    
+    const doRatingBuy = async (rating, startPrice, maxPrice, quantity, progressEl, panel, isCancelled) => {
+        const pool = await loadRatingPlayersPool();
+        const players = pool[rating]?.players || [];
+        
+        if (players.length === 0) {
+            progressEl.textContent = L("rating.noPool");
+            return;
+        }
+        
+        // 获取俱乐部已有球员
+        const clubPlayers = await fetchPlayers();
+        const ownedDefIds = new Set(clubPlayers.map(p => p.definitionId));
+        
+        // 过滤掉已拥有的球员
+        const availablePlayers = players.filter(p => !ownedDefIds.has(p.definitionId));
+        
+        if (availablePlayers.length === 0) {
+            progressEl.textContent = L("rating.allOwned");
+            return;
+        }
+        
+        // 随机打乱
+        const shuffled = [...availablePlayers].sort(() => Math.random() - 0.5);
+        
+        let bought = 0;
+        let attempts = 0;
+        const maxAttempts = Math.min(shuffled.length, quantity * 3);
+        
+        while (bought < quantity && attempts < maxAttempts && panel.style.display !== "none" && !isCancelled()) {
+            const player = shuffled[attempts % shuffled.length];
+            attempts++;
+            
+            progressEl.textContent = L("rating.currentPlayer", player.name, startPrice.toLocaleString());
+            
+            // 创建虚拟球员对象用于购买
+            const conceptItem = new UTItemEntity();
+            conceptItem.definitionId = player.definitionId;
+            conceptItem.stackCount = 1;
+            conceptItem.concept = true;
+            
+            // 设置临时价格上限
+            cachedPriceItems = cachedPriceItems || {};
+            cachedPriceItems[player.definitionId] = { price: startPrice, isExtinct: false };
+            
+            // 计算允许的最高价
+            const maxIncrements = getOwnSettings().maxPriceIncrements ?? (SETTINGS_DEFAULTS.maxPriceIncrements || 1);
+            let allowedMaxPrice = startPrice;
+            for (let i = 0; i < maxIncrements; i++) {
+                allowedMaxPrice = incrementPrice(allowedMaxPrice);
+            }
+            
+            // 监控加价过程的回调函数
+            let currentAttemptPrice = startPrice;
+            const onPriceAttempt = (attemptPrice) => {
+                currentAttemptPrice = attemptPrice;
+                progressEl.textContent = L("rating.currentPlayer", player.name, attemptPrice.toLocaleString());
+            };
+            
+            const result = await buyConceptPlayer(conceptItem, { suppressNotifications: true, onPriceAttempt });
+            
+            if (result?.success) {
+                bought++;
+                const boughtPrice = result.priceLabel || (result.price?.toLocaleString() || startPrice.toLocaleString());
+                progressEl.textContent = `${L("rating.progress", bought, quantity)} (${boughtPrice})`;
+                // 更新已拥有列表
+                ownedDefIds.add(player.definitionId);
+                console.log(`[NoBrainSBC] 分购成功: ${player.name} @ ${boughtPrice}`);
+            } else {
+                const failReason = result?.reason || "失败";
+                const failPrice = result?.priceLabel || result?.price?.toLocaleString() || "";
+                const failMsg = failPrice ? `${failReason} @ ${failPrice}` : failReason;
+                progressEl.textContent = L("rating.currentPlayer", player.name, failMsg);
+                console.log(`[NoBrainSBC] 分购失败: ${player.name} - ${failReason} ${failPrice ? `@ ${failPrice}` : ''}`);
+            }
+            
+            // 延迟
+            await new Promise(r => setTimeout(r, 1000 + Math.random() * 500));
+        }
+        
+        progressEl.textContent = L("rating.progress", bought, quantity);
+        showNotification(L("notify.buyComplete", bought, quantity), bought === quantity ? UINotificationType.POSITIVE : UINotificationType.NEGATIVE);
+        
+        // 全部购买成功后自动关闭窗口 / Auto-close panel when all bought successfully
+        if (bought === quantity) {
+            await new Promise(r => setTimeout(r, 1000));
+            panel.style.display = "none";
+        }
     };
 
     // ─── 暴露API供Helper插件调用 / Expose API for Helper plugin ────────────────────
